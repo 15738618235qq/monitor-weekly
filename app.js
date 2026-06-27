@@ -1469,8 +1469,16 @@ function generateReport(){
               children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:tableHeaders[i].replace(/\\n/g,''),bold:true,size:16,font:'宋体'})]})]}));
             const allRows=[new TableRow({children:hcells,tableHeader:true})];
 
-            // Build data rows
-            records.slice(0,80).forEach(r=>{
+            // Find max |cumDisp| for red marking (only non-skipped valid records)
+            const validForMax=records.filter(r=>r.cumDisp!=null);
+            let maxCumDispAbs=0;
+            if(validForMax.length>0){
+              maxCumDispAbs=Math.max(...validForMax.map(r=>Math.abs(r.cumDisp)));
+            }
+
+            // Build data rows — delete second row (index 1), no bold, only max cumDisp in red
+            records.slice(0,80).forEach((r,i)=>{
+              if(i===1)return; // Delete second row
               const mm=monthlyMap[r.point]||{};
               const cumDisp=r.cumDisp!=null?r.cumDisp:null;
               const cumSettle=r.cumSettle!=null?r.cumSettle:null;
@@ -1478,24 +1486,23 @@ function generateReport(){
               const mSettle=mm.monthlySettle;
               const rDisp=mm.rateDisp;
               const rSettle=mm.rateSettle;
-              // Template uses bold text for anomaly values (not color)
-              const isBoldDisp=cumDisp!=null&&Math.abs(cumDisp)>=(th.cum_orange||50);
-              const isBoldSettle=cumSettle!=null&&Math.abs(cumSettle)>=(th.settle_orange||30);
+              // Only mark max cumulative displacement in red font
+              const isMaxCum=cumDisp!=null&&Math.abs(cumDisp)===maxCumDispAbs;
 
               const cellDefs=[
-                {t:r.point,b:false},
-                {t:proj.latestDate,b:false},
-                {t:cumDisp!=null?cumDisp.toFixed(2):'-',b:isBoldDisp},
-                {t:mDisp!=null?mDisp.toFixed(2):'-',b:!!(mDisp!=null&&Math.abs(mDisp)>=3)},
-                {t:rDisp!=null?rDisp.toFixed(3):'-',b:!!(rDisp!=null&&Math.abs(rDisp)>=1.0)},
-                {t:cumSettle!=null?cumSettle.toFixed(2):'-',b:isBoldSettle},
-                {t:mSettle!=null?mSettle.toFixed(2):'-',b:!!(mSettle!=null&&Math.abs(mSettle)>=3)},
-                {t:rSettle!=null?rSettle.toFixed(3):'-',b:!!(rSettle!=null&&Math.abs(rSettle)>=1.0)},
-                {t:'',b:false}
+                {t:r.point},
+                {t:proj.latestDate},
+                {t:cumDisp!=null?cumDisp.toFixed(2):'-',color:isMaxCum?'FF0000':undefined},
+                {t:mDisp!=null?mDisp.toFixed(2):'-'},
+                {t:rDisp!=null?rDisp.toFixed(3):'-'},
+                {t:cumSettle!=null?cumSettle.toFixed(2):'-'},
+                {t:mSettle!=null?mSettle.toFixed(2):'-'},
+                {t:rSettle!=null?rSettle.toFixed(3):'-'},
+                {t:''}
               ];
 
               const cells=cellDefs.map((cd,i)=>new TC({borders:border,width:{size:tblColWidths[i],type:WT.DXA},verticalAlign:'center',
-                children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:cd.t,size:16,font:'宋体',bold:cd.b})]})]}));
+                children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:cd.t,size:16,font:'宋体',color:cd.color||undefined})]})]}));
               allRows.push(new TableRow({children:cells}));
             });
 
