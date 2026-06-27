@@ -1469,8 +1469,8 @@ function generateReport(){
               children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:tableHeaders[i].replace(/\\n/g,''),bold:true,size:16,font:'宋体'})]})]}));
             const allRows=[new TableRow({children:hcells,tableHeader:true})];
 
-            // Exclude row index 1 entirely (filter, not skip-in-loop)
-            const tableRecords=records.slice(0,80).filter((r,i)=>i!==1);
+            // Skip header-type row (index 0, point name is "监测点号" with all NaN values)
+            const tableRecords=records.slice(0,80).filter((r,i)=>i!==0);
 
             // Pre-compute all numeric values per column for abs-max detection
             const numCols=[2,3,4,5,6,7]; // indices in cellDefs
@@ -1524,7 +1524,7 @@ function generateReport(){
             });
 
             // Table title
-            const tableTitle='表'+sectionNum+'-1  '+proj.name+'监测成果表（共'+records.length+'个测点）';
+            const tableTitle='表'+sectionNum+'-1  '+proj.name+'监测成果表（共'+tableRecords.length+'个测点）';
             docChildren.push(new Paragraph({spacing:{before:200,after:100},children:[new TextRun({text:tableTitle,size:20,font:'宋体',bold:true,italics:true})]}));
             docChildren.push(new Table({rows:allRows,width:{size:100,type:WT.PERCENTAGE}}));
 
