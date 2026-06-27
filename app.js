@@ -1469,16 +1469,32 @@ function generateReport(){
               children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:tableHeaders[i].replace(/\\n/g,''),bold:true,size:16,font:'宋体'})]})]}));
             const allRows=[new TableRow({children:hcells,tableHeader:true})];
 
-            // Find max |cumDisp| for red marking (only non-skipped valid records)
-            const validForMax=records.filter(r=>r.cumDisp!=null);
-            let maxCumDispAbs=0;
-            if(validForMax.length>0){
-              maxCumDispAbs=Math.max(...validForMax.map(r=>Math.abs(r.cumDisp)));
-            }
+            // Exclude row index 1 entirely (filter, not skip-in-loop)
+            const tableRecords=records.slice(0,80).filter((r,i)=>i!==1);
 
-            // Build data rows — delete second row (index 1), no bold, only max cumDisp in red
-            records.slice(0,80).forEach((r,i)=>{
-              if(i===1)return; // Delete second row
+            // Pre-compute all numeric values per column for abs-max detection
+            const numCols=[2,3,4,5,6,7]; // indices in cellDefs
+            const colAccessors=[
+              (r,mm)=>r.cumDisp,
+              (r,mm)=>mm.monthlyDisp,
+              (r,mm)=>mm.rateDisp,
+              (r,mm)=>r.cumSettle,
+              (r,mm)=>mm.monthlySettle,
+              (r,mm)=>mm.rateSettle
+            ];
+            const colMaxAbs=numCols.map(()=>0);
+            const colPrelim = tableRecords.map(r=>{
+              const mm=monthlyMap[r.point]||{};
+              return colAccessors.map(fn=>fn(r,mm));
+            });
+            colPrelim.forEach(vals=>{
+              vals.forEach((v,j)=>{
+                if(v!=null&&Math.abs(v)>colMaxAbs[j])colMaxAbs[j]=Math.abs(v);
+              });
+            });
+
+            // Build data rows
+            tableRecords.forEach(r=>{
               const mm=monthlyMap[r.point]||{};
               const cumDisp=r.cumDisp!=null?r.cumDisp:null;
               const cumSettle=r.cumSettle!=null?r.cumSettle:null;
@@ -1486,18 +1502,19 @@ function generateReport(){
               const mSettle=mm.monthlySettle;
               const rDisp=mm.rateDisp;
               const rSettle=mm.rateSettle;
-              // Only mark max cumulative displacement in red font
-              const isMaxCum=cumDisp!=null&&Math.abs(cumDisp)===maxCumDispAbs;
+
+              const vals=[cumDisp,mDisp,rDisp,cumSettle,mSettle,rSettle];
+              const isRed=vals.map((v,i)=>v!=null&&Math.abs(v)===colMaxAbs[i]);
 
               const cellDefs=[
                 {t:r.point},
                 {t:proj.latestDate},
-                {t:cumDisp!=null?cumDisp.toFixed(2):'-',color:isMaxCum?'FF0000':undefined},
-                {t:mDisp!=null?mDisp.toFixed(2):'-'},
-                {t:rDisp!=null?rDisp.toFixed(3):'-'},
-                {t:cumSettle!=null?cumSettle.toFixed(2):'-'},
-                {t:mSettle!=null?mSettle.toFixed(2):'-'},
-                {t:rSettle!=null?rSettle.toFixed(3):'-'},
+                {t:cumDisp!=null?cumDisp.toFixed(2):'-',color:isRed[0]?'FF0000':undefined},
+                {t:mDisp!=null?mDisp.toFixed(2):'-',color:isRed[1]?'FF0000':undefined},
+                {t:rDisp!=null?rDisp.toFixed(3):'-',color:isRed[2]?'FF0000':undefined},
+                {t:cumSettle!=null?cumSettle.toFixed(2):'-',color:isRed[3]?'FF0000':undefined},
+                {t:mSettle!=null?mSettle.toFixed(2):'-',color:isRed[4]?'FF0000':undefined},
+                {t:rSettle!=null?rSettle.toFixed(3):'-',color:isRed[5]?'FF0000':undefined},
                 {t:''}
               ];
 
