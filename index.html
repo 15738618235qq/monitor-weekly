@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>长九灰岩矿项目监测数据处理系统</title>
+<script src="https://cdn.bootcdn.net/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"
+  onerror="var s0=document.createElement('script');s0.src='https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js';s0.onerror=function(){var s1=document.createElement('script');s1.src='https://cdn.bootcdn.net/ajax/libs/supabase-js/2.39.0/umd/supabase.min.js';document.head.appendChild(s1);};document.head.appendChild(s0);"></script>
+<style>
+:root{
+--primary:#1A6BC4;
+--primary-dark:#1557A0;
+--primary-light:#E8F1FB;
+--accent:#D94040;
+--sidebar-bg:#1B2D45;
+--bg:#F0F3F7;
+--surface:#FFFFFF;
+--text:#1F2937;
+--text-secondary:#6B7280;
+--border:#E2E6ED;
+--success:#10B981;
+--warning:#F59E0B;
+--danger:#DC2626;
+--shadow-sm:0 1px 3px rgba(0,0,0,0.04);
+--shadow-md:0 4px 12px rgba(0,0,0,0.06);
+--shadow-lg:0 12px 40px rgba(0,0,0,0.1);
+--radius:8px;
+--radius-sm:6px;
+--radius-xs:4px;
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Microsoft YaHei','PingFang SC',sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh;font-size:13px;line-height:1.6}
+a{color:var(--primary);text-decoration:none}
+
+/* === SIDEBAR === */
+.sidebar{width:220px;background:var(--sidebar-bg);color:#fff;display:flex;flex-direction:column;position:fixed;top:0;left:0;bottom:0;z-index:200;overflow-y:auto}
+.sidebar-brand{padding:20px 20px 16px;font-size:16px;font-weight:700;letter-spacing:1px;color:#fff;line-height:1.4}
+.sidebar-brand .sys-abbr{display:block;font-size:12px;color:rgba(255,255,255,0.4);font-weight:400;margin-top:2px;letter-spacing:0}
+.sidebar-divider{margin:0 20px;height:1px;background:rgba(255,255,255,0.08)}
+.sidebar-nav{flex:1;padding:8px 0}
+.sidebar-section{padding:14px 20px 6px;font-size:10px;color:rgba(255,255,255,0.35);text-transform:uppercase;letter-spacing:1.5px;font-weight:600}
+.sidebar-item{padding:11px 20px;cursor:pointer;font-size:13px;color:rgba(255,255,255,0.6);display:flex;align-items:center;gap:10px;transition:all 0.2s ease;border-left:3px solid transparent;user-select:none}
+.sidebar-item:hover{color:#fff;background:rgba(26,107,196,0.25)}
+.sidebar-item.active{color:#fff;background:rgba(26,107,196,0.18);border-left-color:var(--accent);font-weight:600}
+.sidebar-item .ico{font-size:15px;width:20px;text-align:center;opacity:0.7}
+.sidebar-footer{padding:14px 20px;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:rgba(255,255,255,0.4)}
+.sidebar-footer .user-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.sidebar-footer .user-dot{width:8px;height:8px;border-radius:50%;background:var(--success);flex-shrink:0}
+.sidebar-footer .user-dot.offline{background:#999}
+.sidebar-footer .storage-info{font-size:10px;color:rgba(255,255,255,0.25)}
+
+/* === MAIN AREA === */
+.main-area{margin-left:220px;flex:1;display:flex;flex-direction:column;min-width:1020px}
+
+/* === TOPBAR === */
+.topbar{background:var(--surface);padding:0 28px;height:52px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 1px 0 rgba(0,0,0,0.06),0 2px 8px rgba(0,0,0,0.03)}
+.topbar-left{display:flex;align-items:center}
+.topbar-left .sys-name{font-size:15px;font-weight:600;color:var(--text);letter-spacing:0.3px;white-space:nowrap}
+.topbar-right{display:flex;align-items:center;gap:16px}
+.topbar-right .status-indicator{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-secondary)}
+.topbar-right .status-dot{width:8px;height:8px;border-radius:50%;background:var(--success);flex-shrink:0}
+.topbar-right .status-dot.offline{background:#C0C4CC}
+.topbar-right .status-dot.connecting{background:var(--warning);animation:pulse 1s infinite}
+.topbar-right .user-info{font-size:12px;color:var(--text-secondary);display:flex;align-items:center;gap:8px}
+.topbar-right .user-avatar{width:30px;height:30px;border-radius:50%;background:var(--primary-light);color:var(--primary);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600}
+.topbar-right .btn-sm{border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);padding:5px 14px;border-radius:var(--radius-sm);font-size:12px;cursor:pointer;transition:all 0.2s ease;font-family:inherit}
+.topbar-right .btn-sm:hover{background:var(--bg);color:var(--text);border-color:#C0C8D4}
+.topbar-right #clockDisplay{font-size:12px;color:var(--text-secondary)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+
+/* === MAIN CONTENT === */
+.main-content{padding:24px 28px;flex:1;overflow-y:auto}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+
+/* === CARDS === */
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow-sm);padding:24px;margin-bottom:20px;border:1px solid var(--border)}
+.card-title{font-size:15px;font-weight:600;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;color:var(--text)}
+.card-title .icon{width:28px;height:28px;border-radius:var(--radius-xs);display:inline-flex;align-items:center;justify-content:center;font-size:13px;color:#fff;background:var(--primary)}
+
+/* === AREA HEADER === */
+.area-header{font-size:14px;font-weight:600;color:var(--text);margin:20px 0 12px;padding-left:12px;border-left:3px solid var(--primary)}
+
+/* === PROJECT GRID === */
+.project-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
+.project-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;cursor:pointer;transition:all 0.2s ease}
+.project-card:hover{box-shadow:var(--shadow-md);border-color:var(--primary);transform:translateY(-2px)}
+.project-card h4{font-size:14px;margin-bottom:10px;color:var(--text)}
+.project-card .tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.tag{font-size:11px;padding:2px 10px;border-radius:10px;background:var(--primary-light);color:var(--primary);font-weight:500}
+.tag.warn{background:rgba(217,64,64,0.08);color:var(--accent)}
+.tag.success{background:rgba(16,185,129,0.08);color:var(--success)}
+.tag.neutral{background:#F3F4F6;color:var(--text-secondary)}
+.tag.purple{background:rgba(123,31,162,0.08);color:#7B1FA2}
+.tag.cyan{background:rgba(0,163,224,0.08);color:#006064}
+.project-card .meta{font-size:12px;color:var(--text-secondary);margin-top:8px}
+
+/* === BUTTONS === */
+.btn{padding:9px 18px;border:none;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s ease;display:inline-flex;align-items:center;gap:6px;font-family:inherit;letter-spacing:0.2px}
+.btn-primary{background:var(--primary);color:#fff}
+.btn-primary:hover{background:var(--primary-dark);box-shadow:0 2px 8px rgba(26,107,196,0.25)}
+.btn-danger{background:var(--accent);color:#fff}
+.btn-danger:hover{background:#C53030;box-shadow:0 2px 8px rgba(217,64,64,0.25)}
+.btn-success{background:var(--success);color:#fff}
+.btn-success:hover{background:#059669;box-shadow:0 2px 8px rgba(16,185,129,0.25)}
+.btn-outline{background:var(--surface);color:var(--primary);border:1px solid var(--primary)}
+.btn-outline:hover{background:var(--primary-light)}
+.btn-sm{padding:5px 12px;font-size:12px}
+.btn-warn{background:var(--warning);color:#fff}
+.btn-warn:hover{background:#D97706;box-shadow:0 2px 8px rgba(245,158,11,0.25)}
+
+/* === FORMS === */
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:13px;font-weight:500;margin-bottom:5px;color:var(--text)}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;font-family:inherit;transition:all 0.2s ease;background:var(--surface);color:var(--text)}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(26,107,196,0.08)}
+.form-row{display:flex;gap:14px}
+.form-row .form-group{flex:1}
+
+/* === TABLES === */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#F8FAFD;padding:11px 14px;text-align:left;font-weight:600;border-bottom:2px solid #DDE3EC;position:sticky;top:0;z-index:1;color:var(--text);font-size:12px;text-transform:uppercase;letter-spacing:0.3px}
+td{padding:10px 14px;border-bottom:1px solid #EEF1F6}
+tbody tr:nth-child(even){background:#F9FAFB}
+tbody tr:hover{background:#EBF3FC}
+.alert-row{background:rgba(217,64,64,0.04)!important}
+.alert-cell{color:var(--accent);font-weight:600}
+
+/* === MODAL === */
+.modal-overlay{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.4);z-index:300;align-items:center;justify-content:center;backdrop-filter:blur(2px)}
+.modal-overlay.show{display:flex}
+.modal{background:var(--surface);border-radius:12px;padding:28px;max-width:900px;width:90%;max-height:80vh;overflow-y:auto;box-shadow:var(--shadow-lg)}
+.modal h3{margin-bottom:18px;color:var(--text);font-size:16px;font-weight:600}
+.modal .btn-group{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+
+/* === STAT CARDS === */
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
+.stat-card{background:var(--surface);border-radius:var(--radius);padding:22px 18px;text-align:center;border:1px solid var(--border);box-shadow:var(--shadow-sm);transition:all 0.2s ease}
+.stat-card:hover{box-shadow:var(--shadow-md);transform:translateY(-1px)}
+.stat-card .value{font-size:30px;font-weight:700;letter-spacing:-0.5px}
+.stat-card .label{font-size:12px;color:var(--text-secondary);margin-top:6px;letter-spacing:0.2px}
+.stat-card.blue .value{color:var(--primary)}
+.stat-card.green .value{color:var(--success)}
+.stat-card.orange .value{color:var(--warning)}
+.stat-card.red .value{color:var(--accent)}
+.stat-card.purple .value{color:#7B1FA2}
+
+/* === PROGRESS === */
+.progress-bar{height:6px;background:#E8ECF2;border-radius:3px;overflow:hidden;margin-top:8px}
+.progress-bar .fill{height:100%;border-radius:3px;transition:width 0.3s ease}
+.fill.blue{background:var(--primary)}
+.fill.green{background:var(--success)}
+
+/* === BADGES === */
+.badge{display:inline-block;padding:3px 10px;border-radius:10px;font-size:11px;font-weight:500;letter-spacing:0.2px}
+.badge-blue{background:var(--primary-light);color:var(--primary)}
+.badge-green{background:rgba(16,185,129,0.1);color:var(--success)}
+.badge-red{background:rgba(217,64,64,0.1);color:var(--accent)}
+.badge-orange{background:rgba(245,158,11,0.1);color:#D97706}
+.badge-purple{background:rgba(123,31,162,0.1);color:#7B1FA2}
+
+/* === TABLE CONTAINER === */
+.table-container{max-height:400px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm)}
+.preview-table{max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);margin-top:14px}
+
+/* === TEXTAREA === */
+textarea{resize:vertical;min-height:60px}
+
+/* === TOAST === */
+.toast{position:fixed;top:24px;right:24px;z-index:400;padding:12px 22px;border-radius:var(--radius-sm);color:#fff;font-size:13px;font-weight:500;animation:slideIn 0.3s ease;box-shadow:0 6px 20px rgba(0,0,0,0.12);letter-spacing:0.2px}
+.toast.success{background:var(--success)}
+.toast.error{background:var(--accent)}
+.toast.info{background:var(--primary)}
+@keyframes slideIn{from{transform:translateX(120%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* === CHARTS === */
+.chart-container{position:relative;width:100%;height:300px;margin:14px 0}
+.trend-chart-container{position:relative;width:100%;height:500px;margin:14px 0;background:var(--surface)}
+
+/* === EMPTY STATE === */
+.empty-state{text-align:center;padding:48px;color:var(--text-secondary)}
+.empty-state .icon{font-size:48px;margin-bottom:14px;opacity:0.4}
+
+/* === WEEK SELECTOR === */
+.week-selector{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.week-selector input[type="date"]{padding:7px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:13px;background:var(--surface)}
+
+/* === INFO TIP === */
+.info-tip{background:rgba(26,107,196,0.04);border-left:3px solid var(--primary);padding:12px 16px;border-radius:var(--radius-xs);font-size:12px;color:var(--text-secondary);margin-bottom:14px;line-height:1.5}
+.info-tip.warn{background:rgba(245,158,11,0.06);border-left-color:var(--warning)}
+
+/* === CHECKBOX GROUP === */
+.checkbox-group{display:flex;flex-wrap:wrap;gap:8px}
+.checkbox-group label{display:flex;align-items:center;gap:5px;font-size:13px;cursor:pointer;padding:6px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);transition:all 0.2s ease}
+.checkbox-group label:hover{background:var(--primary-light)}
+.checkbox-group label.checked{border-color:var(--primary);background:rgba(26,107,196,0.06);color:var(--primary)}
+
+/* === VERSION LIST === */
+.version-list{max-height:300px;overflow-y:auto}
+.version-item{display:flex;justify-content:space-between;align-items:center;padding:11px 14px;border-bottom:1px solid #EEF1F6;transition:background 0.2s}
+.version-item:hover{background:#F9FAFB}
+.version-item .v-info{flex:1}
+.version-item .v-time{font-size:12px;color:var(--text-secondary)}
+.version-item .v-desc{font-size:13px;margin-top:3px;color:var(--text)}
+
+/* === SHARE CODE === */
+.share-code-box{background:#1E293B;color:#A7F3D0;padding:18px;border-radius:var(--radius);font-family:'Cascadia Code','Consolas','Courier New',monospace;font-size:12px;word-break:break-all;max-height:200px;overflow-y:auto;margin:14px 0;line-height:1.6}
+
+/* === LOGIN OVERLAY === */
+.login-overlay{display:flex;position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:500;align-items:center;justify-content:center;flex-direction:column}
+.login-box{background:var(--surface);border-radius:12px;padding:40px 36px;width:400px;text-align:center;box-shadow:var(--shadow-lg);border:1px solid var(--border)}
+.login-box h2{font-size:18px;margin-bottom:8px;color:var(--text);font-weight:700;letter-spacing:0.3px}
+.login-box .sub{font-size:12px;color:var(--text-secondary);margin-bottom:28px;line-height:1.5}
+.login-box input{width:100%;padding:11px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:14px;margin-bottom:14px;font-family:inherit;transition:all 0.2s ease}
+.login-box input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px rgba(26,107,196,0.08)}
+
+/* === BASELINE === */
+.baseline-type-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:14px;margin-top:14px}
+.baseline-type-card{background:#F8FAFD;border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.baseline-type-card h5{font-size:13px;margin-bottom:12px;color:var(--text);border-bottom:1px solid var(--border);padding-bottom:8px;font-weight:600}
+.baseline-type-card .mini-row{display:flex;gap:10px;margin-bottom:8px}
+.baseline-type-card .mini-row .fg{flex:1}
+.baseline-type-card .mini-row label{font-size:11px;color:var(--text-secondary)}
+.baseline-type-card .mini-row input,.baseline-type-card .mini-row select{padding:5px 8px;font-size:12px}
+
+/* === CLOUD SYNC === */
+.sync-status-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px;flex-shrink:0}
+.sync-status-dot.connected{background:var(--success)}
+.sync-status-dot.disconnected{background:#C0C4CC}
+.sync-status-dot.connecting{background:var(--warning);animation:pulse 1s infinite}
+.auth-section{margin-top:14px;padding:14px;background:#F8FAFD;border-radius:var(--radius)}
+.auth-section h5{font-size:13px;margin-bottom:10px;color:var(--text);font-weight:600}
+.auth-section input{width:100%;padding:7px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px;margin-bottom:8px}
+.auth-btn-group{display:flex;gap:8px;margin-top:10px}
+.pending-badge{background:rgba(245,158,11,0.12);color:#D97706;font-size:10px;padding:2px 8px;border-radius:8px;margin-left:6px}
+.sync-info-row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid #EEF1F6;font-size:13px}
+.sync-info-row .label{color:var(--text-secondary);min-width:100px}
+.sync-info-row .value{font-weight:500;color:var(--text)}
+
+/* === SCROLLBAR === */
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#C8D2DE;border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#A0AEC0}
+</style>
+</head>
+<body>
+
+<div class="login-overlay" id="loginOverlay">
+<div class="login-box">
+<h2>长九灰岩矿项目监测数据处理系统</h2>
+<div class="sub">矿山及物流廊道、码头安全监测 | 偏距/桩号双模式计算</div>
+<input type="text" id="loginUser" placeholder="用户名（首次自动注册）">
+<input type="password" id="loginPass" placeholder="密码">
+<div style="display:flex;gap:10px;margin-top:10px">
+<button class="btn btn-primary" style="flex:1" onclick="doLogin()">登录 / 注册</button>
+<button class="btn btn-outline" style="flex:1" onclick="skipLogin()">离线使用</button>
+</div>
+<button class="btn btn-outline" style="width:100%;margin-top:10px" onclick="showCloudAuthModal()">云端注册/登录</button>
+<div id="loginMsg" style="margin-top:10px;font-size:12px;color:var(--accent)"></div>
+</div>
+</div>
+
+<div class="modal-overlay" id="cloudAuthModal">
+<div class="modal" style="max-width:440px">
+<h3>Supabase 云端认证</h3>
+<div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">使用邮箱和密码注册/登录云端账号，实现多设备数据同步</div>
+<div class="form-group"><label>邮箱</label><input type="email" id="cloudEmailModal" placeholder="your@email.com"></div>
+<div class="form-group"><label>密码（至少6位）</label><input type="password" id="cloudPassModal" placeholder="输入密码"></div>
+<div class="btn-group" style="margin-top:16px">
+<button class="btn btn-primary" onclick="cloudSignUpFromModal()">注册</button>
+<button class="btn btn-success" onclick="cloudSignInFromModal()">登录</button>
+<button class="btn btn-outline" onclick="$('cloudAuthModal').classList.remove('show')">取消</button>
+</div>
+<div id="cloudAuthMsgModal" style="margin-top:10px;font-size:12px"></div>
+</div>
+</div>
+
+<div class="sidebar" id="sidebar">
+<div class="sidebar-brand">长九灰岩矿项目<span class="sys-abbr">监测数据处理系统</span></div>
+<div class="sidebar-divider"></div>
+<div class="sidebar-nav">
+<div class="sidebar-section">监测管理</div>
+<div class="sidebar-item active" data-panel="dashboard"><span class="ico">&#9673;</span> 项目总览</div>
+<div class="sidebar-item" data-panel="baseline"><span class="ico">&#9634;</span> 基线配置</div>
+<div class="sidebar-item" data-panel="import"><span class="ico">&#8657;</span> 数据导入</div>
+<div class="sidebar-item" data-panel="process"><span class="ico">&#9776;</span> 数据处理</div>
+<div class="sidebar-section">分析报告</div>
+<div class="sidebar-item" data-panel="history"><span class="ico">&#8986;</span> 历史管理</div>
+<div class="sidebar-item" data-panel="report"><span class="ico">&#9998;</span> 报告生成</div>
+<div class="sidebar-section">协同工具</div>
+<div class="sidebar-item" data-panel="share"><span class="ico">&#9733;</span> 分享与导入</div>
+<div class="sidebar-item" data-panel="versions"><span class="ico">&#8635;</span> 版本历史</div>
+<div class="sidebar-item" data-panel="account"><span class="ico">&#9679;</span> 账户管理</div>
+<div class="sidebar-section">云服务</div>
+<div class="sidebar-item" data-panel="sync"><span class="ico">&#9729;</span> 云同步设置</div>
+</div>
+<div class="sidebar-footer">
+<div class="user-row"><span class="user-dot" id="userDot"></span><span id="sidebarUser" style="color:rgba(255,255,255,0.55)">离线用户</span></div>
+<div class="storage-info">数据存储在浏览器本地</div>
+</div>
+</div>
+
+<div class="main-area">
+<div class="topbar">
+<div class="topbar-left">
+<span class="sys-name">长九灰岩矿项目监测数据处理系统</span>
+</div>
+<div class="topbar-right">
+<span class="status-indicator"><span class="status-dot offline" id="topStatusDot"></span><span id="cloudStatusMini">未连接</span></span>
+<span id="clockDisplay"></span>
+<button class="btn btn-sm btn-outline" id="btnCloudLogin" onclick="switchPanel('sync')" style="display:none">登录云端</button>
+<button class="btn btn-sm btn-outline" id="btnCloudLogout" onclick="cloudLogout()" style="display:none"><span id="cloudUserDisplay"></span></button>
+<button class="btn btn-sm btn-outline" onclick="exportAllData()">备份全部</button>
+<button class="btn btn-sm btn-outline" onclick="showImportAllModal()">恢复备份</button>
+</div>
+</div>
+<div class="main-content">
+
+<!-- DASHBOARD -->
+<div class="tab-panel active" id="panel-dashboard">
+<div class="stat-grid" id="statGrid"></div>
+<div class="card">
+<div class="card-title"><span class="icon">&#9673;</span> 项目列表（按监测部位分组）</div>
+<div id="projectList"></div>
+</div>
+<div class="card">
+<div class="card-title"><span class="icon" style="background:var(--success)">&#9998;</span> 操作日志（最近10条）</div>
+<div id="recentLogs" style="font-size:12px;max-height:200px;overflow-y:auto"></div>
+</div>
+</div>
+
+<!-- BASELINE -->
+<div class="tab-panel" id="panel-baseline">
+<div class="card"><div class="card-title"><span class="icon" style="background:var(--warning)">&#9634;</span> 基线参数配置（按监测类型独立配置）</div>
+<div class="info-tip">每个子项目的每种监测类型可配置独立的计算方式（偏距法/桩号法）和预警阈值。偏距法计算垂直于基线方向的偏移；桩号法计算沿基线方向的投影距离。</div>
+<div class="form-row">
+<div class="form-group"><label>选择子项目</label><select id="baselineProject" onchange="loadBaseline()"></select></div>
+<div class="form-group"><label>监测类型</label><select id="baselineType" onchange="loadBaselineType()">
+<option value="displacement">水平位移监测</option>
+<option value="settlement">沉降监测</option>
+<option value="inclino">测斜监测</option>
+<option value="anchor">锚杆应力</option>
+<option value="water">地下水位</option>
+<option value="blast">爆破振动</option>
+<option value="convergence">收敛监测</option>
+<option value="stacking">堆载高度</option>
+</select></div>
+</div>
+<div class="form-group"><label>计算方式</label><select id="blCalcMode" onchange="onCalcModeChange()">
+<option value="offset">偏距法 — 垂直基线方向偏移距离</option>
+<option value="chainage">桩号法 — 沿基线方向投影距离</option>
+</select></div>
+<div id="baselineCoords">
+<div class="form-row">
+<div class="form-group"><label>基线起点 X0</label><input type="number" id="blX0" step="any"></div>
+<div class="form-group"><label>基线起点 Y0</label><input type="number" id="blY0" step="any"></div>
+<div class="form-group"><label>基线终点 X1</label><input type="number" id="blX1" step="any"></div>
+<div class="form-group"><label>基线终点 Y1</label><input type="number" id="blY1" step="any"></div>
+</div>
+<div class="form-row">
+<div class="form-group"><label>方位角(°)</label><input type="number" id="blAzimuth" step="any" readonly></div>
+<div class="form-group"><label>基线长度(m)</label><input type="number" id="blLength" step="any" readonly></div>
+</div>
+</div>
+<div style="margin:14px 0"><strong>预警阈值设置（本监测类型）：</strong></div>
+<div class="form-row">
+<div class="form-group"><label>单次变化黄色预警</label><input type="number" id="thDispY" step="any" value="5"></div>
+<div class="form-group"><label>单次变化橙色预警</label><input type="number" id="thDispO" step="any" value="10"></div>
+<div class="form-group"><label>单次变化红色预警</label><input type="number" id="thDispR" step="any" value="20"></div>
+</div>
+<div class="form-row">
+<div class="form-group"><label>累计变化黄色预警</label><input type="number" id="thCumY" step="any" value="30"></div>
+<div class="form-group"><label>累计变化橙色预警</label><input type="number" id="thCumO" step="any" value="50"></div>
+<div class="form-group"><label>累计变化红色预警</label><input type="number" id="thCumR" step="any" value="80"></div>
+</div>
+<div class="form-row">
+<div class="form-group"><label>沉降黄色预警(mm)</label><input type="number" id="thSettleY" step="any" value="10"></div>
+<div class="form-group"><label>沉降橙色预警(mm)</label><input type="number" id="thSettleO" step="any" value="30"></div>
+<div class="form-group"><label>沉降红色预警(mm)</label><input type="number" id="thSettleR" step="any" value="50"></div>
+</div>
+<div style="margin-top:14px">
+<button class="btn btn-primary" onclick="saveBaseline()">保存基线配置</button>
+<button class="btn btn-outline" onclick="loadBaselineType()">重新加载</button>
+</div>
+</div>
+</div>
+
+<!-- IMPORT -->
+<div class="tab-panel" id="panel-import">
+<div class="card"><div class="card-title"><span class="icon">&#8657;</span> 数据导入</div>
+<div class="form-row">
+<div class="form-group"><label>目标子项目</label><select id="importProject"></select></div>
+<div class="form-group"><label>观测日期</label><input type="date" id="importDate"></div>
+</div>
+<div class="form-group"><label>数据格式</label><select id="importFormat" onchange="showImportHint()">
+<option value="A">格式A - 全站仪坐标 (点名,Xi,Yi,Zi,Xc,Yc,Zc)</option>
+<option value="B">格式B - 水准高程 (点名,Hi,Hc)</option>
+<option value="C">格式C - 测斜孔数据 (孔号,孔深,位移)</option>
+<option value="D">格式D - 锚杆应力 (点名,应力MPa,状态)</option>
+<option value="E">格式E - 地下水位 (点名,水位m)</option>
+<option value="F">格式F - 爆破振动 (点名,X-Y-Z速度,频率)</option>
+<option value="G">格式G - 收敛监测 (点名,测线长度mm)</option>
+<option value="H">格式H - 堆载高度 (区域,高度m)</option>
+</select></div>
+<div id="importCalcModeRow" class="form-row" style="display:none">
+<div class="form-group"><label>计算方式</label><select id="importCalcMode">
+<option value="offset">偏距法 — 垂直基线方向偏移距离</option>
+<option value="chainage">桩号法 — 沿基线方向投影距离</option>
+</select></div>
+<div class="form-group"><label>基线来源</label><select id="importBaselineSource" onchange="onBaselineSourceChange()">
+<option value="config">使用项目配置的基线参数</option>
+<option value="manual">手动输入基线坐标</option>
+</select></div>
+</div>
+<div id="manualBaselineRow" style="display:none">
+<div class="info-tip">手动输入基线：起点和终点坐标定义基线方向</div>
+<div class="form-row">
+<div class="form-group"><label>起点X0</label><input type="number" id="manX0" step="any"></div>
+<div class="form-group"><label>起点Y0</label><input type="number" id="manY0" step="any"></div>
+<div class="form-group"><label>终点X1</label><input type="number" id="manX1" step="any"></div>
+<div class="form-group"><label>终点Y1</label><input type="number" id="manY1" step="any"></div>
+</div>
+</div>
+<div id="importHint" class="info-tip"></div>
+<div class="form-group"><label>粘贴数据（Tab/空格分隔，每行一条）</label><textarea id="importData" rows="8" placeholder="点名 X坐标 Y坐标 Z坐标 X坐标 Y坐标 Z坐标"></textarea></div>
+<div class="form-row">
+<div class="form-group"><label>或上传 Excel 文件</label><input type="file" id="excelFile" accept=".xlsx,.xls,.csv" onchange="handleExcelImport()"></div>
+</div>
+<label style="display:flex;align-items:center;gap:8px;margin-bottom:14px;cursor:pointer;font-size:13px">
+<input type="checkbox" id="importCumulative" checked> <span>累计模式（新数据更新累计值）</span>
+</label>
+<div class="info-tip" id="importModeHint" style="display:none"></div>
+<button class="btn btn-primary" onclick="importData()">导入数据</button>
+<button class="btn btn-outline" onclick="loadRealDataTest()">加载真实坐标测试数据</button>
+<button class="btn btn-outline" onclick="runSelfTest()">运行自检测试</button>
+<div class="preview-table" id="importPreview"></div>
+</div>
+</div>
+
+<!-- PROCESS -->
+<div class="tab-panel" id="panel-process">
+<div class="card"><div class="card-title"><span class="icon" style="background:var(--success)">&#9776;</span> 数据处理</div>
+<div class="form-row">
+<div class="form-group"><label>子项目</label><select id="processProject" onchange="renderProcess()"></select></div>
+<div class="form-group"><label>本期日期</label><select id="processDate" onchange="renderProcess()"></select></div>
+<div class="form-group"><label>对比基准</label><select id="processCompare" onchange="renderProcess()">
+<option value="prev">上一期</option><option value="first">第一期（总累计）</option><option value="manual">指定日期</option>
+</select></div>
+<div class="form-group"><label>对比日期</label><input type="date" id="processCompareDate" onchange="renderProcess()"></div>
+</div>
+<div class="area-header">两期位移对比表</div>
+<div class="table-container" id="dispTable"></div>
+<div class="area-header" style="margin-top:20px">两期沉降对比表</div>
+<div class="table-container" id="settleTable"></div>
+<div class="card" style="margin-top:20px"><div class="card-title"><span class="icon" style="background:var(--accent)">!</span> 预警信息</div><div id="alertInfo"></div></div>
+<div class="card" style="margin-top:20px"><div class="card-title"><span class="icon" style="background:var(--warning)">&#9654;</span> 测斜管深度-位移剖面图</div>
+<div class="form-row"><div class="form-group"><label>选择测斜管</label><select id="inclinoHole" onchange="renderInclinoChart()"></select></div></div>
+<div class="chart-container"><canvas id="inclinoCanvas"></canvas></div></div>
+<div class="card" style="margin-top:20px"><div class="card-title"><span class="icon">&#9650;</span> 累计位移趋势图</div>
+<div class="form-row"><div class="form-group"><label>子项目</label><select id="trendProject" onchange="renderTrendChart()"></select></div></div>
+<div class="trend-chart-container"><canvas id="trendCanvas"></canvas></div></div>
+</div>
+</div>
+
+<!-- HISTORY -->
+<div class="tab-panel" id="panel-history">
+<div class="card"><div class="card-title"><span class="icon" style="background:var(--warning)">&#8986;</span> 历史累计数据管理</div>
+<div class="form-row"><div class="form-group"><label>子项目</label><select id="histProject" onchange="renderHistPanel()"></select></div></div>
+<div class="info-tip">手动添加测点的历史累计数据或从 Excel 批量导入</div>
+<div class="form-row">
+<div class="form-group"><label>测点</label><input type="text" id="histPoint" placeholder="如 CN3"></div>
+<div class="form-group"><label>日期</label><input type="date" id="histDate"></div>
+<div class="form-group"><label>累计位移(mm)</label><input type="number" id="histCumDisp" step="any"></div>
+<div class="form-group"><label>累计沉降(mm)</label><input type="number" id="histCumSettle" step="any"></div>
+</div>
+<button class="btn btn-primary" onclick="addHistRecord()">添加记录</button>
+<button class="btn btn-outline" onclick="document.getElementById('histExcel').click()">从Excel导入</button>
+<input type="file" id="histExcel" accept=".xlsx,.xls" style="display:none" onchange="handleHistExcel()">
+<div class="table-container" style="margin-top:14px"><table id="histTable"><thead><tr><th>测点</th><th>日期</th><th>累计位移</th><th>累计沉降</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+</div>
+</div>
+
+<!-- REPORT -->
+<div class="tab-panel" id="panel-report">
+<div class="card"><div class="card-title"><span class="icon">&#9998;</span> 报告生成</div>
+<div class="form-row">
+<div class="form-group"><label>报告类型</label><select id="reportType" onchange="toggleReportType()">
+<option value="weekly">周报</option><option value="monthly">月报</option>
+</select></div>
+<div class="form-group">
+<label>子项目（可多选，按区域分组）</label>
+<div style="margin-bottom:8px">
+<button class="btn btn-sm btn-outline" onclick="selectAllReportProjects()" type="button">全选</button>
+<button class="btn btn-sm btn-outline" onclick="deselectAllReportProjects()" type="button">取消全选</button>
+</div>
+<div id="reportProjects" class="checkbox-group" style="max-height:250px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px"></div>
+</div>
+<div class="form-group"><label>报告期</label><input type="date" id="reportDate"></div>
+</div>
+<div class="info-tip" id="reportHint">将生成 Word (.docx) 格式报告，包含封面、监测成果表、趋势图和分析结论</div>
+<button class="btn btn-primary" onclick="generateReport()">生成报告（.docx）</button>
+</div>
+</div>
+
+<!-- CLOUD SYNC -->
+<div class="tab-panel" id="panel-sync">
+<div class="card"><div class="card-title"><span class="icon" style="background:#7B1FA2">&#9729;</span> 云同步设置（Supabase）</div>
+<div class="info-tip">Supabase 云数据库实现多人在线协同。需先在 Supabase SQL Editor 中执行建表语句，然后填写 URL 和 Key。</div>
+
+<div class="sync-info-row"><span class="label">连接状态</span><span class="value" id="syncStatusText"><span class="sync-status-dot disconnected"></span>未连接</span></div>
+<div class="sync-info-row"><span class="label">在线用户数</span><span class="value" id="syncOnlineCount">-</span></div>
+<div class="sync-info-row"><span class="label">最近同步时间</span><span class="value" id="syncLastTime">尚未同步</span></div>
+<div class="sync-info-row"><span class="label">待推送队列</span><span class="value"><span id="syncPendingCount">0</span> 条</span></div>
+
+<div class="form-row" style="margin-top:14px">
+<div class="form-group"><label>Supabase URL</label><input type="text" id="syncUrl" placeholder="https://YOUR_PROJECT.supabase.co"></div>
+<div class="form-group"><label>Anon Key</label><input type="text" id="syncKey" placeholder="YOUR_ANON_KEY"></div>
+</div>
+<div style="display:flex;gap:10px;margin-bottom:14px">
+<button class="btn btn-primary" onclick="saveSyncConfig()">保存配置并连接</button>
+<button class="btn btn-outline" onclick="manualSync()">立即同步</button>
+<button class="btn btn-outline" onclick="testSupabaseConnection()">测试连接</button>
+</div>
+
+<div class="auth-section" id="cloudAuthSection">
+<h5>Supabase 云端登录（邮箱+密码）</h5>
+<div class="form-row">
+<div class="form-group"><label>邮箱</label><input type="email" id="cloudEmail" placeholder="your@email.com"></div>
+<div class="form-group"><label>密码</label><input type="password" id="cloudPass" placeholder="至少6位"></div>
+</div>
+<div class="auth-btn-group">
+<button class="btn btn-sm btn-primary" onclick="cloudSignUp()">注册</button>
+<button class="btn btn-sm btn-success" onclick="cloudSignIn()">登录</button>
+<button class="btn btn-sm btn-outline" onclick="cloudLogout()">退出</button>
+</div>
+<div id="cloudAuthMsg" style="margin-top:8px;font-size:12px"></div>
+</div>
+
+<div class="area-header" style="margin-top:20px">数据库建表 SQL</div>
+<div class="info-tip">请在 Supabase SQL Editor 中执行以下建表语句（一次性操作）</div>
+<div class="share-code-box" id="supabaseSQL" style="max-height:250px">-- Supabase 建表语句
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY, name TEXT, area TEXT,
+  description TEXT, created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS baseline_types (
+  id SERIAL PRIMARY KEY, project_id TEXT, type_name TEXT,
+  calc_method TEXT DEFAULT 'offset',
+  x0 DOUBLE PRECISION, y0 DOUBLE PRECISION,
+  x1 DOUBLE PRECISION, y1 DOUBLE PRECISION,
+  dx DOUBLE PRECISION, dy DOUBLE PRECISION,
+  length DOUBLE PRECISION, alert_thresholds JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS measurements (
+  id SERIAL PRIMARY KEY, project_key TEXT, date DATE,
+  records JSONB, uploaded_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS history_cum_data (
+  id SERIAL PRIMARY KEY, project_id TEXT, point TEXT,
+  entries JSONB, created_at TIMESTAMPTZ DEFAULT NOW()
+);
+ALTER PUBLICATION supabase_realtime ADD TABLE measurements;
+CREATE INDEX IF NOT EXISTS idx_m_project_key ON measurements(project_key);
+</div>
+</div>
+</div>
+
+<!-- SHARE -->
+<div class="tab-panel" id="panel-share">
+<div class="card"><div class="card-title"><span class="icon" style="background:var(--success)">&#9733;</span> 分享与导入</div>
+<div class="area-header">生成分享码</div>
+<div class="info-tip">分享码包含选定子项目的全部数据（测量数据、历史累计、基线配置），接收方可通过分享码一键导入</div>
+<div class="form-row"><div class="form-group"><label>选择子项目（多选）</label><div id="shareProjects" class="checkbox-group"></div></div></div>
+<button class="btn btn-primary" onclick="generateShareCode()">生成分享码</button>
+<div class="share-code-box" id="shareCodeBox" style="display:none"></div>
+<div class="area-header" style="margin-top:20px">导入分享码</div>
+<div class="info-tip">粘贴分享码，数据将合并到当前数据库（同名测点以最新日期为准）</div>
+<div class="form-group"><textarea id="importShareCode" rows="3" placeholder="粘贴分享码..."></textarea></div>
+<button class="btn btn-success" onclick="importShareCode()">导入分享码</button>
+<div id="importShareResult" style="margin-top:10px;font-size:12px"></div>
+</div>
+</div>
+
+<!-- VERSIONS -->
+<div class="tab-panel" id="panel-versions">
+<div class="card"><div class="card-title"><span class="icon" style="background:var(--warning)">&#8635;</span> 版本历史管理</div>
+<div class="info-tip">系统每执行一次数据导入或修改，自动创建版本快照。可随时回滚到任意历史版本。</div>
+<div style="margin-bottom:14px">
+<button class="btn btn-sm btn-outline" onclick="createSnapshot()">手动创建快照</button>
+<button class="btn btn-sm btn-outline" onclick="renderVersions()">刷新列表</button>
+<button class="btn btn-sm btn-danger" onclick="clearVersions()">清空所有快照</button>
+</div>
+<div class="version-list" id="versionList"></div>
+</div>
+</div>
+
+<!-- ACCOUNT -->
+<div class="tab-panel" id="panel-account">
+<div class="card"><div class="card-title"><span class="icon">&#9679;</span> 账户管理</div>
+<div class="form-row"><div class="form-group"><label>当前用户</label><input type="text" id="accountUser" readonly></div></div>
+<div class="form-row">
+<div class="form-group"><label>修改密码</label><input type="password" id="accountNewPass" placeholder="新密码"></div>
+<div class="form-group"><label>确认密码</label><input type="password" id="accountConfirmPass" placeholder="再次输入"></div>
+</div>
+<button class="btn btn-primary" onclick="changePassword()">修改密码</button>
+<button class="btn btn-outline" onclick="logoutUser()" style="margin-left:10px">退出登录</button>
+<div id="accountMsg" style="margin-top:10px;font-size:12px"></div>
+<div class="area-header" style="margin-top:20px">云端备份</div>
+<div class="info-tip">将全部数据导出为 JSON 文件，可下载到本地或发送给协作者。建议定期备份。</div>
+<div style="display:flex;gap:10px;margin-top:14px">
+<button class="btn btn-primary" onclick="exportAllData()">导出全部数据 (JSON)</button>
+<button class="btn btn-outline" onclick="document.getElementById('restoreFile').click()">从文件恢复</button>
+<input type="file" id="restoreFile" accept=".json" style="display:none" onchange="handleRestoreFile()">
+</div>
+</div>
+</div>
+
+</div><!-- /main-content -->
+</div><!-- /main-area -->
+
+<div class="modal-overlay" id="projectModal"><div class="modal" id="projectModalContent"></div></div>
+<div class="modal-overlay" id="versionDetailModal"><div class="modal" id="versionDetailContent"></div></div>
+<div class="modal-overlay" id="confirmModal"><div class="modal" id="confirmModalContent"></div></div>
+
+<script src="app.js"></script>
+</body>
+</html>

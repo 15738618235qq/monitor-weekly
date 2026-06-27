@@ -1,0 +1,1581 @@
+// ==================== CORE DATA MODEL ====================
+window.__APP_LOADED__ = false;
+window.__APP_ERROR__ = null;
+try {
+const APP_KEY='monitorData_v5';
+const USER_KEY='monitorUser_v5';
+const VERSIONS_KEY='monitorVersions_v5';
+const LOG_KEY='monitorLogs_v5';
+const SYNC_CONFIG_KEY='monitorSyncConfig_v5';
+const PENDING_SYNC_KEY='monitorPendingSync_v5';
+
+// Supabase Cloud Sync Config
+const SUPABASE_URL='https://sakehlndzmwasqpavzxy.supabase.co';
+const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNha2VobG5kem13YXNxcGF2enh5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NjI1NjgsImV4cCI6MjA5ODAzODU2OH0.PjR4cHMot8anj5tmHwze4WEsgDmvXyNhUZiSBGqh04U';
+let supabase=null,cloudUser=null,supabaseConnected=false;
+let pendingSyncQueue=[],realtimeChannel=null,onlineUserCount=0;
+
+function initSupabase(){
+  if(supabase)return; // 防止重复初始化
+  // CDN 可能仍在异步加载后备脚本，若 window.supabase 尚未就绪则延迟重试
+  if(!window.supabase||!window.supabase.createClient){
+    console.warn('[Supabase] SDK 尚未就绪，1s 后重试...');
+    setTimeout(initSupabase,1000);
+    return;
+  }
+  try{
+    const config=JSON.parse(localStorage.getItem(SYNC_CONFIG_KEY)||'{}');
+    const url=config.url||SUPABASE_URL;
+    const key=config.key||SUPABASE_ANON_KEY;
+    if(url.includes('YOUR_PROJECT')||key.includes('YOUR_ANON_KEY')){
+      supabase=null;supabaseConnected=false;updateSyncUI();return;
+    }
+    supabase=window.supabase.createClient(url,key,{realtime:{params:{eventsPerSecond:10}}});
+    supabaseConnected=true;
+    updateSyncUI();
+    loadCloudUser();
+    startRealtimeSubscription();
+    setInterval(pollRealTime,5000);
+    setInterval(flushPendingSync,30000);
+  }catch(e){
+    console.error('[Supabase] 初始化失败:',e);
+    supabase=null;supabaseConnected=false;
+    updateSyncUI();
+  }
+}
+
+function updateSyncUI(){
+  const dot=document.getElementById('cloudStatusMini');
+  if(supabaseConnected&&cloudUser){
+    dot.innerHTML='<span class="sync-status-dot connected"></span>已连接 · '+(cloudUser.email||'云端用户');
+  }
+  else if(supabaseConnected){dot.innerHTML='<span class="sync-status-dot connected"></span>已连接(未登录)';}
+  else{dot.innerHTML='<span class="sync-status-dot disconnected"></span>未连接';}
+  const st=document.getElementById('syncStatusText');
+  if(st){
+    if(supabaseConnected&&cloudUser){st.innerHTML='<span class="sync-status-dot connected"></span>已连接 · '+(cloudUser.email||'云端用户');}
+    else if(supabaseConnected){st.innerHTML='<span class="sync-status-dot connected"></span>已连接(未登录云端)';}
+    else{st.innerHTML='<span class="sync-status-dot disconnected"></span>未连接';}
+  }
+  // 侧边栏底部用户区域
+  const su=document.getElementById('sidebarUser');
+  const ud=document.getElementById('userDot');
+  if(cloudUser){
+    if(su)su.textContent=cloudUser.email||'云端用户';
+    if(ud)ud.classList.remove('offline');
+  }
+  const oc=document.getElementById('syncOnlineCount');
+  if(oc)oc.textContent=onlineUserCount||'-';
+  const pc=document.getElementById('syncPendingCount');
+  if(pc)pc.textContent=pendingSyncQueue.length;
+  const si=document.getElementById('sidebarStorageInfo');
+  if(si)si.innerHTML=supabaseConnected&&cloudUser?'本地存储 + 云同步'+(pendingSyncQueue.length>0?'<span class="pending-badge">'+pendingSyncQueue.length+'</span>':''):'数据存储在浏览器本地';
+  const bl=document.getElementById('btnCloudLogin');
+  const blo=document.getElementById('btnCloudLogout');
+  const cud=document.getElementById('cloudUserDisplay');
+  if(cloudUser){
+    if(bl)bl.style.display='none';
+    if(blo)blo.style.display='inline-flex';
+    if(cud)cud.textContent=cloudUser.email||'云端用户';
+  }else{
+    if(bl)bl.style.display='inline-flex';
+    if(blo)blo.style.display='none';
+  }
+}
+
+function loadCloudUser(){
+  if(!supabase)return;
+  supabase.auth.getSession().then(function(r){
+    if(r.data&&r.data.session){cloudUser=r.data.session.user;supabaseConnected=true;}
+    updateSyncUI();
+  }).catch(function(){cloudUser=null;updateSyncUI();});
+}
+
+async function cloudSignUp(){
+  if(!supabase){toast('请先配置Supabase','error');return;}
+  var e=document.getElementById('cloudEmail').value.trim();
+  var p=document.getElementById('cloudPass').value.trim();
+  var m=document.getElementById('cloudAuthMsg');
+  if(!e||!p||p.length<6){m.textContent='请输入有效邮箱和至少6位密码';m.style.color='#c5221f';return;}
+  try{
+    var r=await supabase.auth.signUp({email:e,password:p});
+    if(r.error){m.textContent='注册失败: '+r.error.message;m.style.color='#c5221f';return;}
+    cloudUser=r.data.user;
+    m.textContent='注册成功！已自动登录';m.style.color='#137333';
+    updateSyncUI();addOperationLog('云同步','Supabase云端注册');
+    setTimeout(function(){syncToCloud();},1000);
+  }catch(ex){m.textContent='连接错误: '+ex.message;m.style.color='#c5221f';}
+}
+
+async function cloudSignIn(){
+  if(!supabase){toast('请先配置Supabase','error');return;}
+  var e=document.getElementById('cloudEmail').value.trim();
+  var p=document.getElementById('cloudPass').value.trim();
+  var m=document.getElementById('cloudAuthMsg');
+  if(!e||!p){m.textContent='请输入邮箱和密码';m.style.color='#c5221f';return;}
+  try{
+    var r=await supabase.auth.signInWithPassword({email:e,password:p});
+    if(r.error){m.textContent='登录失败: '+r.error.message;m.style.color='#c5221f';return;}
+    cloudUser=r.data.user;
+    m.textContent='登录成功';m.style.color='#137333';
+    updateSyncUI();addOperationLog('云同步','Supabase云端登录');
+    setTimeout(function(){syncFromCloud();},1000);
+  }catch(ex){m.textContent='连接错误: '+ex.message;m.style.color='#c5221f';}
+}
+
+async function cloudLogout(){
+  if(supabase)await supabase.auth.signOut().catch(function(){});
+  cloudUser=null;updateSyncUI();
+  var m=document.getElementById('cloudAuthMsg');
+  if(m){m.textContent='已退出云端登录';m.style.color='#555';}
+  addOperationLog('云同步','退出Supabase云端');
+}
+
+function showCloudAuthModal(){
+  $('cloudAuthModal').classList.add('show');
+}
+
+function syncLocalUserFromCloud(){
+  if(!cloudUser)return;
+  currentUser={name:cloudUser.email,passHash:'',cloudId:cloudUser.id,created:cloudUser.created_at||new Date().toISOString()};
+  localStorage.setItem(USER_KEY,JSON.stringify(currentUser));
+  $('loginOverlay').style.display='none';
+  initApp();
+}
+
+async function cloudSignUpFromModal(){
+  if(!supabase){var m=document.getElementById('cloudAuthMsgModal');m.textContent='请等待Supabase初始化完成';m.style.color='#c5221f';return;}
+  var e=document.getElementById('cloudEmailModal').value.trim();
+  var p=document.getElementById('cloudPassModal').value.trim();
+  var m=document.getElementById('cloudAuthMsgModal');
+  if(!e||!p||p.length<6){m.textContent='请输入有效邮箱和至少6位密码';m.style.color='#c5221f';return;}
+  try{
+    var r=await supabase.auth.signUp({email:e,password:p});
+    if(r.error){m.textContent='注册失败: '+r.error.message;m.style.color='#c5221f';return;}
+    cloudUser=r.data.user;
+    m.textContent='注册成功！已自动登录';m.style.color='#137333';
+    updateSyncUI();addOperationLog('云同步','Supabase云端注册');
+    syncLocalUserFromCloud();
+    setTimeout(function(){$('cloudAuthModal').classList.remove('show');syncToCloud();},1000);
+  }catch(ex){m.textContent='连接错误: '+ex.message;m.style.color='#c5221f';}
+}
+
+async function cloudSignInFromModal(){
+  if(!supabase){var m=document.getElementById('cloudAuthMsgModal');m.textContent='请等待Supabase初始化完成';m.style.color='#c5221f';return;}
+  var e=document.getElementById('cloudEmailModal').value.trim();
+  var p=document.getElementById('cloudPassModal').value.trim();
+  var m=document.getElementById('cloudAuthMsgModal');
+  if(!e||!p){m.textContent='请输入邮箱和密码';m.style.color='#c5221f';return;}
+  try{
+    var r=await supabase.auth.signInWithPassword({email:e,password:p});
+    if(r.error){m.textContent='登录失败: '+r.error.message;m.style.color='#c5221f';return;}
+    cloudUser=r.data.user;
+    m.textContent='登录成功';m.style.color='#137333';
+    updateSyncUI();addOperationLog('云同步','Supabase云端登录');
+    syncLocalUserFromCloud();
+    setTimeout(function(){$('cloudAuthModal').classList.remove('show');syncFromCloud();},1000);
+  }catch(ex){m.textContent='连接错误: '+ex.message;m.style.color='#c5221f';}
+}
+
+function startRealtimeSubscription(){
+  if(!supabase||!supabaseConnected)return;
+  try{
+    if(realtimeChannel)realtimeChannel.unsubscribe();
+    realtimeChannel=supabase.channel('m_changes')
+      .on('postgres_changes',{event:'*',schema:'public',table:'measurements'},function(payload){
+        var isSelf=(cloudUser&&payload.new&&payload.new.uploaded_by===cloudUser.email);
+        if(!isSelf&&(payload.eventType==='INSERT'||payload.eventType==='UPDATE')){
+          toast('检测到其他用户修改了数据，正在合并...','info');
+          setTimeout(function(){syncFromCloud();},300);
+        }
+      }).subscribe(function(status){
+        if(status==='SUBSCRIBED')console.log('Realtime OK');
+      });
+  }catch(e){console.warn('Realtime失败: '+e.message);}
+}
+
+async function pollRealTime(){
+  if(!supabaseConnected||!cloudUser)return;
+  try{
+    var r=await supabase.from('measurements').select('uploaded_by').limit(100);
+    if(!r.error&&r.data)onlineUserCount=new Set(r.data.map(function(x){return x.uploaded_by;}).filter(Boolean)).size;
+  }catch(e){onlineUserCount=0;}
+  updateSyncUI();
+}
+
+// Dual-write saveData
+var _originalSaveData=saveData;
+saveData=function(data){
+  data._lastSaved=new Date().toISOString();
+  data._savedBy=(currentUser?currentUser.name:'unknown');
+  data._version=5.2;
+  try{localStorage.setItem(APP_KEY,JSON.stringify(data));autoSnapshot(data);}
+  catch(e){console.warn('localStorage: '+e.message);}
+  syncToCloud();
+};
+
+async function syncToCloud(){
+  if(!supabase||!supabaseConnected||!cloudUser)return;
+  var data=appData;if(!data||!data.projects)return;
+  try{
+    for(var i=0;i<data.projects.length;i++){
+      var p=data.projects[i];
+      await supabase.from('projects').upsert({
+        id:p.id,name:p.name,area:p.area,description:p.desc,
+        updated_at:new Date().toISOString()
+      },{onConflict:'id'});
+    }
+    if(data.baselineTypes){
+      var pjIds=Object.keys(data.baselineTypes);
+      for(var j=0;j<pjIds.length;j++){
+        var pjId=pjIds[j],types=Object.keys(data.baselineTypes[pjId]);
+        for(var k=0;k<types.length;k++){
+          var tn=types[k],bt=data.baselineTypes[pjId][tn];
+          await supabase.from('baseline_types').upsert({
+            project_id:pjId,type_name:tn,calc_method:bt.calcMode||'offset',
+            x0:bt.x0,y0:bt.y0,x1:bt.x1,y1:bt.y1,
+            dx:(bt.x1||0)-(bt.x0||0),dy:(bt.y1||0)-(bt.y0||0),
+            length:Math.sqrt(Math.pow((bt.x1||0)-(bt.x0||0),2)+Math.pow((bt.y1||0)-(bt.y0||0),2)),
+            alert_thresholds:data.thresholds||{}
+          },{onConflict:'project_id,type_name'});
+        }
+      }
+    }
+    var mKeys=Object.keys(data.measurements||{});
+    for(var m=0;m<mKeys.length;m++){
+      var key=mKeys[m],parts=key.split('_'),date=parts.pop(),pjKey=parts.join('_');
+      await supabase.from('measurements').upsert({
+        project_key:pjKey,date:date,records:data.measurements[key],
+        uploaded_by:(cloudUser?cloudUser.email:'unknown')
+      },{onConflict:'project_key,date'});
+    }
+    if(data.historyCumData){
+      var hPjIds=Object.keys(data.historyCumData);
+      for(var h=0;h<hPjIds.length;h++){
+        var hp=hPjIds[h],points=Object.keys(data.historyCumData[hp]);
+        for(var pt=0;pt<points.length;pt++){
+          var point=points[pt];
+          await supabase.from('history_cum_data').upsert({
+            project_id:hp,point:point,entries:data.historyCumData[hp][point]
+          },{onConflict:'project_id,point'});
+        }
+      }
+    }
+    var lt=document.getElementById('syncLastTime');
+    if(lt)lt.textContent=new Date().toLocaleString();
+  }catch(e){
+    console.warn('云端同步失败: '+e.message);
+    pendingSyncQueue.push({timestamp:new Date().toISOString(),error:e.message});
+    try{localStorage.setItem(PENDING_SYNC_KEY,JSON.stringify(pendingSyncQueue));}catch(x){}
+    updateSyncUI();
+  }
+}
+
+async function syncFromCloud(){
+  if(!supabase||!supabaseConnected||!cloudUser||!appData)return;
+  try{
+    var mr=await supabase.from('measurements').select('*');
+    if(mr.data&&mr.data.length>0){
+      mr.data.forEach(function(m){
+        if(!appData.measurements)appData.measurements={};
+        var kk=m.project_key+'_'+m.date;
+        if(!appData.measurements[kk]||new Date(m.created_at||0)>new Date(appData._lastSaved||0)){
+          appData.measurements[kk]=m.records;
+        }
+      });
+    }
+    var br=await supabase.from('baseline_types').select('*');
+    if(br.data&&br.data.length>0){
+      br.data.forEach(function(b){
+        if(!appData.baselineTypes)appData.baselineTypes={};
+        if(!appData.baselineTypes[b.project_id])appData.baselineTypes[b.project_id]={};
+        appData.baselineTypes[b.project_id][b.type_name]={
+          calcMode:b.calc_method,x0:b.x0,y0:b.y0,x1:b.x1,y1:b.y1
+        };
+        if(b.alert_thresholds)appData.thresholds=b.alert_thresholds;
+      });
+    }
+    var hr=await supabase.from('history_cum_data').select('*');
+    if(hr.data&&hr.data.length>0){
+      hr.data.forEach(function(h){
+        if(!appData.historyCumData)appData.historyCumData={};
+        if(!appData.historyCumData[h.project_id])appData.historyCumData[h.project_id]={};
+        appData.historyCumData[h.project_id][h.point]=h.entries;
+      });
+    }
+    appData._lastSaved=new Date().toISOString();
+    try{localStorage.setItem(APP_KEY,JSON.stringify(appData));}catch(x){}
+    var lt=document.getElementById('syncLastTime');
+    if(lt)lt.textContent=new Date().toLocaleString();
+    addOperationLog('云同步','从Supabase拉取合并数据');
+  }catch(e){console.warn('云端拉取失败: '+e.message);}
+}
+
+async function manualSync(){
+  if(!supabaseConnected||!cloudUser){toast('请先配置Supabase并登录云端','error');return;}
+  toast('正在同步...','info');
+  await syncFromCloud();
+  await syncToCloud();
+  renderOverview();populateAllSelects();
+  toast('同步完成','success');
+}
+
+function saveSyncConfig(){
+  var u=document.getElementById('syncUrl').value.trim();
+  var k=document.getElementById('syncKey').value.trim();
+  if(!u||!k){toast('请填写URL和Key','error');return;}
+  localStorage.setItem(SYNC_CONFIG_KEY,JSON.stringify({url:u,key:k}));
+  initSupabase();
+  toast('配置已保存','success');
+  setTimeout(function(){if(supabaseConnected){loadCloudUser();updateSyncUI();}},500);
+}
+
+async function testSupabaseConnection(){
+  var u=document.getElementById('syncUrl').value.trim();
+  var k=document.getElementById('syncKey').value.trim();
+  if(!u||!k){toast('请填写URL和Key','error');return;}
+  try{
+    var tc=window.supabase.createClient(u,k);
+    var r=await tc.from('projects').select('count',{count:'exact',head:true});
+    if(r.error){toast('连接失败: '+r.error.message,'error');return;}
+    toast('Supabase连接成功！','success');
+    saveSyncConfig();
+  }catch(e){toast('连接测试失败: '+e.message,'error');}
+}
+
+async function flushPendingSync(){
+  if(!supabaseConnected||!cloudUser||pendingSyncQueue.length===0)return;
+  try{await syncToCloud();pendingSyncQueue=[];try{localStorage.setItem(PENDING_SYNC_KEY,'[]');}catch(x){}}catch(e){}
+}
+
+function loadSyncConfig(){
+  var c=JSON.parse(localStorage.getItem(SYNC_CONFIG_KEY)||'{}');
+  var ue=document.getElementById('syncUrl');
+  var ke=document.getElementById('syncKey');
+  if(ue)ue.value=c.url||SUPABASE_URL;
+  if(ke)ke.value=c.key||SUPABASE_ANON_KEY;
+}
+
+// Full monitoring projects extracted from 73rd monthly report
+const DEFAULT_PROJECTS=[
+  {id:'p05',name:'成品料仓钢立柱',area:'矿山加工系统',desc:'C1-C21共21个测点，位移+沉降双指标',group:'矿山'},
+  {id:'p06',name:'成品料网架-南侧',area:'矿山加工系统',desc:'CN3-CN53共28个测点，水平位移+沉降',group:'矿山'},
+  {id:'p07',name:'成品料网架-北侧',area:'矿山加工系统',desc:'CB3-CB50共28个测点，水平位移+沉降',group:'矿山'},
+  {id:'p08',name:'半成品料仓-南侧',area:'矿山加工系统',desc:'BCN1-BCN20共14个测点，水平位移+沉降',group:'矿山'},
+  {id:'p09',name:'半成品料仓-北侧',area:'矿山加工系统',desc:'BCB1-BCB23共14个测点，水平位移+沉降',group:'矿山'},
+  {id:'p10',name:'中细碎料仓-南侧',area:'矿山加工系统',desc:'ZXSN1-ZXSN9共6个测点',group:'矿山'},
+  {id:'p11',name:'中细碎料仓-北侧',area:'矿山加工系统',desc:'ZXSB1-ZXSB9共6个测点',group:'矿山'},
+  // 物流廊道
+  {id:'p12',name:'物流廊道-锚杆应力计',area:'物流廊道',desc:'锚杆应力监测，应力(MPa)+状态(拉/压)',group:'物流廊道'},
+  {id:'p13',name:'物流廊道-爆破振动',area:'物流廊道',desc:'爆破振动监测，X-Y-Z速度+频率',group:'物流廊道'},
+  {id:'p14',name:'物流廊道-G5排架',area:'物流廊道',desc:'G5-1~G5-4及G5-1C/G5-3C/G5-4C沉降，位移+沉降',group:'物流廊道'},
+  {id:'p15',name:'物流廊道-拉紧装置',area:'物流廊道',desc:'左前/左后/右前/右后4个测点，南北+东西方向位移+沉降',group:'物流廊道'},
+  {id:'p16',name:'物流廊道-钢立柱',area:'物流廊道',desc:'钢立柱位移+沉降监测',group:'物流廊道'},
+  {id:'p17',name:'物流廊道-廊道排架G3-G7',area:'物流廊道',desc:'G3/G4/G6/G7及D/F后缀共47个点位，位移+沉降',group:'物流廊道'},
+  {id:'p18',name:'物流廊道-金磊长胶搭接处',area:'物流廊道',desc:'zs/zx/ys/yx/yb/zb系列20个点位，含立柱+边坡测点',group:'物流廊道'},
+  {id:'p19',name:'物流廊道-马料湖段钢立柱',area:'物流廊道',desc:'W1-W15共15个测点，位移+沉降',group:'物流廊道'},
+  // 陆域堆场-成品料堆场
+  {id:'p20',name:'成品料堆载高度',area:'陆域堆场-成品料',desc:'大石仓/小石仓/砂仓/中石仓4仓，限高18m',group:'陆域堆场'},
+  {id:'p21',name:'成品料网架基础A轴',area:'陆域堆场-成品料',desc:'A02-A86共31个点位，多阶段累计位移(限高15m/16m/17.5m/18m)',group:'陆域堆场'},
+  {id:'p22',name:'成品料网架基础B轴',area:'陆域堆场-成品料',desc:'B2-B83共29个点位，多阶段累计位移',group:'陆域堆场'},
+  {id:'p23',name:'成品料地基土体水平位移',area:'陆域堆场-成品料',desc:'IN1-C1~IN11-C4共11个测斜孔，累计最大位移+深度+速率',group:'陆域堆场'},
+  {id:'p24',name:'成品料仓地弄沉降',area:'陆域堆场-成品料',desc:'D1-1~D4-16共64个点，按大石仓/小石仓/砂仓/中石仓分区',group:'陆域堆场'},
+  // 陆域堆场-混合料试验区
+  {id:'p25',name:'试验区堆载高度',area:'陆域堆场-试验区',desc:'限高19m',group:'陆域堆场'},
+  {id:'p26',name:'试验区网架基础A轴',area:'陆域堆场-试验区',desc:'A50-A59共10个点位，7阶段累计位移(高压旋喷~限高19m)',group:'陆域堆场'},
+  {id:'p27',name:'试验区网架基础B轴',area:'陆域堆场-试验区',desc:'B50-B59共10个点位',group:'陆域堆场'},
+  {id:'p28',name:'试验区地表沉降(T1-T13)',area:'陆域堆场-试验区',desc:'13个沉降标(部分掩埋)，两次堆载试验沉降量+累计+速率',group:'陆域堆场'},
+  {id:'p29',name:'试验区地基水平位移(测斜)',area:'陆域堆场-试验区',desc:'I1/I2/I9/I10/I11/I15/I16/I18共8个孔',group:'陆域堆场'},
+  // 陆域堆场-推广区
+  {id:'p30',name:'推广区堆载高度',area:'陆域堆场-推广区',desc:'限高17m',group:'陆域堆场'},
+  {id:'p31',name:'推广区网架基础A轴',area:'陆域堆场-推广区',desc:'A3-A49共30个点位，3阶段累计位移(限高15m/16.5m/17m)',group:'陆域堆场'},
+  {id:'p32',name:'推广区网架基础B轴',area:'陆域堆场-推广区',desc:'B3-B48共15个点位',group:'陆域堆场'},
+  // 码头平台
+  {id:'p33',name:'码头平台沉降',area:'码头',desc:'77个水准点，码头与长江大堤沉降观测',group:'码头'}
+];
+
+const DEFAULT_APP_DATA={
+  projects:DEFAULT_PROJECTS,
+  measurements:{},
+  inclinometerData:{},
+  historyCumData:{},
+  stages:{},
+  baselines:{},
+  thresholds:{},
+  baselineTypes:{}, // per-type baseline config: {pjId: {typeName: {calcMode, x0,y0,x1,y1}}}
+  anchorStress:{},
+  blastVibration:{},
+  convergence:{},
+  stackingHeight:{},
+  waterLevel:{},
+  staticLevel:{},
+  tunnelSettlement:{}
+};
+
+const DEFAULT_THRESHOLDS={
+  disp_yellow:5,disp_orange:10,disp_red:20,
+  cum_yellow:30,cum_orange:50,cum_red:80,
+  settle_yellow:10,settle_orange:30,settle_red:50
+};
+
+const COLORS28=[
+  '#1a73e8','#e37400','#137333','#c5221f','#7b1fa2','#00695c','#bf360c','#283593',
+  '#2e7d32','#f57f17','#4a148c','#004d40','#b71c1c','#1a237e','#33691e','#e65100',
+  '#311b92','#006064','#880e4f','#0d47a1','#558b2f','#ff6f00','#4527a0','#01579b',
+  '#827717','#dd2c00','#1b5e20','#6a1b9a'
+];
+
+const AREA_COLORS={矿山:'#1a73e8','物流廊道':'#e37400','陆域堆场':'#7b1fa2',码头:'#137333'};
+
+let appData=null;
+let currentUser=null;
+
+function $(id){return document.getElementById(id);}
+function formatDate(d){return d.toISOString().split('T')[0];}
+function toast(msg,type='info'){
+  const t=document.createElement('div');t.className='toast '+type;t.textContent=msg;
+  document.body.appendChild(t);setTimeout(()=>t.remove(),3000);
+}
+function uuid(){return 'xxxx-xxxx'.replace(/x/g,()=>(Math.random()*16|0).toString(16));}
+function simpleHash(s){let h=0;for(let i=0;i<s.length;i++){h=((h<<5)-h)+s.charCodeAt(i);h|=0;}return h.toString(36);}
+
+// ==================== CALCULATION ENGINE ====================
+function getBaselineForType(pjId, typeName){
+  if(appData.baselineTypes && appData.baselineTypes[pjId] && appData.baselineTypes[pjId][typeName]){
+    return appData.baselineTypes[pjId][typeName];
+  }
+  // Fallback to project-level baseline
+  const bl=appData.baselines[pjId];
+  if(bl)return {calcMode:'offset',x0:bl.x0,y0:bl.y0,x1:bl.x1,y1:bl.y1};
+  return {calcMode:'offset',x0:1000,y0:1000,x1:1100,y1:1000};
+}
+
+function calcOffsetDistance(ix,iy,cx,cy,bl){
+  // Offset: perpendicular distance from point to baseline
+  // d = ((yi-y0)*(x1-x0) - (xi-x0)*(y1-y0)) / length
+  const dx=bl.x1-bl.x0,dy=bl.y1-bl.y0,length=Math.sqrt(dx*dx+dy*dy);
+  if(length<1e-10)return {dInit:0,dCurr:0,dDisp:0};
+  const dInit=((iy-bl.y0)*dx-(ix-bl.x0)*dy)/length;
+  const dCurr=((cy-bl.y0)*dx-(cx-bl.x0)*dy)/length;
+  const dDisp=(dCurr-dInit)*1000; // mm
+  return {dInit:parseFloat(dInit.toFixed(10)),dCurr:parseFloat(dCurr.toFixed(10)),dDisp:parseFloat(dDisp.toFixed(2))};
+}
+
+function calcChainageDistance(ix,iy,cx,cy,bl){
+  // Chainage: projection distance along baseline direction
+  // chain = ((xi-x0)*(x1-x0) + (yi-y0)*(y1-y0)) / length
+  const dx=bl.x1-bl.x0,dy=bl.y1-bl.y0,length=Math.sqrt(dx*dx+dy*dy);
+  if(length<1e-10)return {dInit:0,dCurr:0,dDisp:0};
+  const chainInit=((ix-bl.x0)*dx+(iy-bl.y0)*dy)/length;
+  const chainCurr=((cx-bl.x0)*dx+(cy-bl.y0)*dy)/length;
+  const chainDisp=(chainCurr-chainInit)*1000; // mm
+  return {dInit:parseFloat(chainInit.toFixed(10)),dCurr:parseFloat(chainCurr.toFixed(10)),dDisp:parseFloat(chainDisp.toFixed(2))};
+}
+
+function calcDisplacement(ix,iy,iz,cx,cy,cz,bl,calcMode){
+  let dispResult;
+  if(calcMode==='chainage'){
+    dispResult=calcChainageDistance(ix,iy,cx,cy,bl);
+  }else{
+    dispResult=calcOffsetDistance(ix,iy,cx,cy,bl);
+  }
+  const settle=parseFloat(((cz-iz)*1000).toFixed(2));
+  return {
+    ...dispResult,
+    settle,
+    calcMode:calcMode
+  };
+}
+
+// ==================== ACCOUNT SYSTEM ====================
+function loadUser(){
+  try{const raw=localStorage.getItem(USER_KEY);if(raw){currentUser=JSON.parse(raw);}}catch(e){currentUser=null;}
+}
+
+function doLogin(){
+  const u=$('loginUser').value.trim(),p=$('loginPass').value.trim();
+  if(!u||!p){$('loginMsg').textContent='请输入用户名和密码';return;}
+  const stored=localStorage.getItem('user_'+simpleHash(u));
+  if(stored){
+    const data=JSON.parse(stored);
+    if(data.passHash===simpleHash(p)){
+      currentUser={name:u,passHash:simpleHash(p),created:data.created};
+      localStorage.setItem(USER_KEY,JSON.stringify(currentUser));
+      $('loginOverlay').style.display='none';initApp();
+    }else{$('loginMsg').textContent='密码错误';}
+  }else{
+    const userData={name:u,passHash:simpleHash(p),created:new Date().toISOString()};
+    localStorage.setItem('user_'+simpleHash(u),JSON.stringify(userData));
+    currentUser={name:u,passHash:simpleHash(p),created:userData.created};
+    localStorage.setItem(USER_KEY,JSON.stringify(currentUser));
+    $('loginOverlay').style.display='none';initApp();
+  }
+}
+
+function skipLogin(){
+  currentUser={name:'离线用户',passHash:'',created:new Date().toISOString()};
+  localStorage.setItem(USER_KEY,JSON.stringify(currentUser));
+  $('loginOverlay').style.display='none';initApp();
+}
+
+function changePassword(){
+  const np=$('accountNewPass').value.trim(),cp=$('accountConfirmPass').value.trim();
+  if(!np||np!==cp){$('accountMsg').textContent='两次密码不一致或为空';$('accountMsg').style.color='#c5221f';return;}
+  if(!currentUser||currentUser.name==='离线用户'){$('accountMsg').textContent='离线用户无法修改密码';$('accountMsg').style.color='#c5221f';return;}
+  const key='user_'+simpleHash(currentUser.name),stored=localStorage.getItem(key);
+  if(stored){const data=JSON.parse(stored);data.passHash=simpleHash(np);localStorage.setItem(key,JSON.stringify(data));}
+  currentUser.passHash=simpleHash(np);localStorage.setItem(USER_KEY,JSON.stringify(currentUser));
+  $('accountMsg').textContent='密码修改成功';$('accountMsg').style.color='#137333';
+  $('accountNewPass').value='';$('accountConfirmPass').value='';
+}
+
+function logoutUser(){
+  currentUser=null;localStorage.removeItem(USER_KEY);
+  $('loginOverlay').style.display='flex';$('loginMsg').textContent='';
+  $('loginUser').value='';$('loginPass').value='';
+}
+
+// ==================== APP INIT ====================
+function initApp(){
+  initSupabase();
+  try{var pq=JSON.parse(localStorage.getItem(PENDING_SYNC_KEY)||'[]');pendingSyncQueue=pq;}catch(e){pendingSyncQueue=[];}
+
+  try{
+    const raw=localStorage.getItem(APP_KEY);
+    if(raw){
+      appData=JSON.parse(raw);
+      const defaults=['anchorStress','blastVibration','convergence','stackingHeight','waterLevel','staticLevel','tunnelSettlement','baselineTypes'];
+      defaults.forEach(k=>{if(!(k in appData))appData[k]={};});
+      if(!appData.thresholds)appData.thresholds=DEFAULT_THRESHOLDS;
+      // Ensure projects match current full list
+      if(!appData.projects||appData.projects.length<30){
+        const existingIds=new Set((appData.projects||[]).map(p=>p.id));
+        DEFAULT_PROJECTS.forEach(dp=>{if(!existingIds.has(dp.id))appData.projects.push(dp);});
+      }
+    }else{
+      appData=JSON.parse(JSON.stringify(DEFAULT_APP_DATA));
+      appData.baselines={};
+      appData.baselineTypes={};
+      appData.thresholds=JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
+      appData.anchorStress={};appData.blastVibration={};appData.convergence={};
+      appData.stackingHeight={};appData.waterLevel={};appData.staticLevel={};appData.tunnelSettlement={};
+      saveData(appData);
+    }
+  }catch(e){
+    console.error(e);
+    appData=JSON.parse(JSON.stringify(DEFAULT_APP_DATA));
+    appData.baselines={};appData.baselineTypes={};
+    appData.thresholds=JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
+    appData.anchorStress={};appData.blastVibration={};appData.convergence={};
+    appData.stackingHeight={};appData.waterLevel={};appData.staticLevel={};appData.tunnelSettlement={};
+  }
+  if(currentUser){
+    $('sidebarUser').textContent=currentUser.name;$('accountUser').value=currentUser.name;
+    $('userDot').classList.remove('offline');
+  }else{$('sidebarUser').textContent='离线用户';$('userDot').classList.add('offline');}
+  renderOverview();populateAllSelects();renderVersions();refreshFileInfo();updateClock();
+  setInterval(updateClock,30000);
+}
+
+function saveData(data){
+  data._lastSaved=new Date().toISOString();data._savedBy=currentUser?currentUser.name:'unknown';data._version=5.1;
+  localStorage.setItem(APP_KEY,JSON.stringify(data));autoSnapshot(data);
+}
+
+function autoSnapshot(data){
+  const versions=JSON.parse(localStorage.getItem(VERSIONS_KEY)||'[]');
+  if(versions.length>0){const last=versions[versions.length-1];if(Date.now()-new Date(last.time).getTime()<60000)return;}
+  versions.push({time:new Date().toISOString(),user:currentUser?currentUser.name:'unknown',desc:'自动快照 ('+Object.keys(data.measurements||{}).length+'期数据)',data:JSON.parse(JSON.stringify(data))});
+  if(versions.length>50)versions.shift();
+  localStorage.setItem(VERSIONS_KEY,JSON.stringify(versions));
+}
+
+function createSnapshot(){
+  const versions=JSON.parse(localStorage.getItem(VERSIONS_KEY)||'[]');
+  versions.push({time:new Date().toISOString(),user:currentUser?currentUser.name:'unknown',desc:'手动快照 ('+Object.keys(appData.measurements||{}).length+'期数据)',data:JSON.parse(JSON.stringify(appData))});
+  if(versions.length>50)versions.shift();localStorage.setItem(VERSIONS_KEY,JSON.stringify(versions));
+  renderVersions();toast('快照已创建','success');addOperationLog('版本管理','创建手动快照');
+}
+
+function clearVersions(){
+  if(!confirm('确定清空所有版本快照？此操作不可恢复。'))return;
+  localStorage.setItem(VERSIONS_KEY,'[]');renderVersions();toast('所有快照已清空','info');
+}
+
+function renderVersions(){
+  const versions=JSON.parse(localStorage.getItem(VERSIONS_KEY)||'[]'),container=$('versionList');
+  if(versions.length===0){container.innerHTML='<div class="empty-state"><div class="icon">&#8635;</div>暂无版本快照</div>';return;}
+  let html='';
+  versions.reverse().forEach((v,i)=>{
+    const idx=versions.length-1-i,dt=new Date(v.time);
+    const timeStr=dt.getFullYear()+'-'+(dt.getMonth()+1).toString().padStart(2,'0')+'-'+dt.getDate().toString().padStart(2,'0')+' '+dt.getHours().toString().padStart(2,'0')+':'+dt.getMinutes().toString().padStart(2,'0');
+    html+='<div class="version-item"><div class="v-info"><div class="v-desc"><strong>#'+(idx+1)+'</strong> '+v.desc+'</div><div class="v-time">'+timeStr+' | '+v.user+'</div></div><div style="display:flex;gap:4px"><button class="btn btn-sm btn-outline" onclick="viewVersion('+idx+')">查看</button><button class="btn btn-sm btn-primary" onclick="restoreVersion('+idx+')">还原</button></div></div>';
+  });
+  container.innerHTML=html;
+}
+
+function viewVersion(idx){
+  const versions=JSON.parse(localStorage.getItem(VERSIONS_KEY)||'[]'),v=versions[idx];
+  if(!v)return;
+  const modal=$('versionDetailContent'),summary={时间:v.time,用户:v.user,描述:v.desc,子项目数:(v.data.projects||[]).length,测量期数:Object.keys(v.data.measurements||{}).length,锚杆应力记录:Object.keys(v.data.anchorStress||{}).length,爆破振动记录:Object.keys(v.data.blastVibration||{}).length};
+  modal.innerHTML='<h3>版本快照详情</h3><table>'+Object.entries(summary).map(([k,vv])=>'<tr><td><strong>'+k+'</strong></td><td>'+vv+'</td></tr>').join('')+'</table>';
+  $('versionDetailModal').classList.add('show');
+}
+
+function restoreVersion(idx){
+  if(!confirm('确定还原到此版本？当前数据将被覆盖。建议先创建快照。'))return;
+  const versions=JSON.parse(localStorage.getItem(VERSIONS_KEY)||'[]'),v=versions[idx];
+  if(!v)return;appData=JSON.parse(JSON.stringify(v.data));saveData(appData);
+  renderOverview();populateAllSelects();toast('已还原到版本 #'+(idx+1),'success');addOperationLog('版本管理','还原到版本 #'+(idx+1));
+}
+
+// ==================== SHARE CODE ====================
+function generateShareCode(){
+  const selected=[];document.querySelectorAll('#shareProjects input:checked').forEach(cb=>selected.push(cb.value));
+  if(selected.length===0){toast('请选择至少一个子项目','error');return;}
+  const shareData={v:'5.1',time:new Date().toISOString(),user:currentUser?currentUser.name:'unknown',projects:selected,data:{}};
+  selected.forEach(pjId=>{
+    shareData.data[pjId]={};
+    if(appData.baselineTypes&&appData.baselineTypes[pjId])shareData.data[pjId].baselineTypes=appData.baselineTypes[pjId];
+    shareData.data[pjId].thresholds=appData.thresholds;
+    Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>{shareData.data[pjId][k]=appData.measurements[k];});
+    Object.keys(appData.inclinometerData||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>{shareData.data[pjId][k]=appData.inclinometerData[k];});
+    if(appData.historyCumData[pjId])shareData.data[pjId].historyCum=appData.historyCumData[pjId];
+    Object.keys(appData.anchorStress||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>{shareData.data[pjId][k]=appData.anchorStress[k];});
+    Object.keys(appData.blastVibration||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>{shareData.data[pjId][k]=appData.blastVibration[k];});
+    Object.keys(appData.convergence||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>{shareData.data[pjId][k]=appData.convergence[k];});
+    Object.keys(appData.stackingHeight||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>{shareData.data[pjId][k]=appData.stackingHeight[k];});
+  });
+  const code=btoa(unescape(encodeURIComponent(JSON.stringify(shareData))));
+  $('shareCodeBox').style.display='block';$('shareCodeBox').textContent=code;
+  toast('分享码已生成','success');addOperationLog('分享','生成分享码 ('+selected.join(',')+')');
+}
+
+function importShareCode(){
+  const code=$('importShareCode').value.trim();
+  if(!code){toast('请粘贴分享码','error');return;}
+  try{
+    const json=decodeURIComponent(escape(atob(code))),shareData=JSON.parse(json);
+    if(shareData.v!=='5.1'&&shareData.v!=='5.0'){toast('分享码版本不兼容','error');return;}
+    const projects=shareData.projects||[];let imported=0;
+    projects.forEach(pjId=>{
+      const d=shareData.data[pjId];if(!d)return;
+      if(d.baselineTypes && !appData.baselineTypes)appData.baselineTypes={};
+      if(d.baselineTypes)appData.baselineTypes[pjId]=d.baselineTypes;
+      if(d.thresholds)appData.thresholds=d.thresholds;
+      Object.keys(d).forEach(k=>{
+        if(k==='baseline'||k==='baselineTypes'||k==='thresholds'||k==='historyCum')return;
+        if(k.startsWith(pjId+'_')){
+          if(!appData.measurements)appData.measurements={};
+          appData.measurements[k]=d[k];imported++;
+        }
+      });
+      if(d.historyCum){if(!appData.historyCumData)appData.historyCumData={};if(!appData.historyCumData[pjId])appData.historyCumData[pjId]={};Object.assign(appData.historyCumData[pjId],d.historyCum);}
+    });
+    saveData(appData);
+    $('importShareResult').textContent='成功导入 '+imported+' 期数据';$('importShareResult').style.color='#137333';
+    renderOverview();populateAllSelects();toast('分享码导入成功！共 '+imported+' 期','success');addOperationLog('分享','导入分享码 ('+imported+'期)');
+  }catch(e){$('importShareResult').textContent='分享码解析失败: '+e.message;$('importShareResult').style.color='#c5221f';toast('分享码解析失败','error');}
+}
+
+// ==================== SIDEBAR NAV ====================
+function switchPanel(panelName){
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  const panel=$('panel-'+panelName);if(panel)panel.classList.add('active');
+  document.querySelectorAll('.sidebar-item').forEach(item=>item.classList.remove('active'));
+  const item=document.querySelector('[data-panel="'+panelName+'"]');if(item)item.classList.add('active');
+  const breadcrumbs={dashboard:'项目总览',baseline:'基线配置',import:'数据导入',process:'数据处理',history:'历史管理',report:'报告生成',share:'分享与导入',versions:'版本历史',account:'账户管理',sync:'云同步设置'};
+  $('breadcrumb').textContent=breadcrumbs[panelName]||panelName;
+  if(panelName==='dashboard')renderOverview();
+  if(panelName==='baseline'){populateBaselineSelect();loadBaselineType();}
+  if(panelName==='import'){populateImportSelect();showImportHint();onFormatChange();}
+  if(panelName==='process'){populateProcessSelect();renderProcess();}
+  if(panelName==='history'){populateHistorySelect();renderHistPanel();}
+  if(panelName==='report'){populateReportSelect();}
+  if(panelName==='share')populateShareSelect();
+  if(panelName==='versions')renderVersions();
+  if(panelName==='account'){$('accountUser').value=currentUser?currentUser.name:'';}
+  if(panelName==='sync'){loadSyncConfig();updateSyncUI();}
+}
+document.querySelectorAll('.sidebar-item').forEach(item=>{item.addEventListener('click',function(){const p=this.dataset.panel;if(p)switchPanel(p);});});
+
+// ==================== DASHBOARD ====================
+function renderOverview(){
+  const mCount=Object.keys(appData.measurements||{}).length;
+  const aCount=Object.keys(appData.anchorStress||{}).length;
+  const bCount=Object.keys(appData.blastVibration||{}).length;
+  const cCount=Object.keys(appData.convergence||{}).length;
+  const sCount=Object.keys(appData.stackingHeight||{}).length;
+  const wCount=Object.keys(appData.waterLevel||{}).length;
+  const totalProj=(appData.projects||[]).length;
+  const groups=new Set((appData.projects||[]).map(p=>p.group));
+  const totalOther=aCount+bCount+cCount+sCount+wCount;
+
+  $('statGrid').innerHTML=
+    '<div class="stat-card blue"><div class="value">'+totalProj+'</div><div class="label">监测子项目</div></div>'+
+    '<div class="stat-card green"><div class="value">'+groups.size+'</div><div class="label">监测部位分组</div></div>'+
+    '<div class="stat-card orange"><div class="value">'+(mCount+totalOther)+'</div><div class="label">总监测期/记录数</div></div>'+
+    '<div class="stat-card purple"><div class="value">8</div><div class="label">监测类型覆盖</div></div>';
+
+  // Group projects by area
+  const grouped={};
+  (appData.projects||[]).forEach(p=>{
+    if(!grouped[p.group])grouped[p.group]=[];
+    grouped[p.group].push(p);
+  });
+
+  let projHTML='';
+  Object.keys(grouped).forEach(group=>{
+    projHTML+='<div class="area-header">'+group+' <span class="badge" style="margin-left:8px;background:'+(AREA_COLORS[group]||'#999')+';color:#fff">'+grouped[group].length+'个子项</span></div>';
+    projHTML+='<div class="project-grid">';
+    grouped[group].forEach(p=>{
+      const mKeys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(p.id+'_'));
+      const aKeys=Object.keys(appData.anchorStress||{}).filter(k=>k.startsWith(p.id+'_'));
+      const bKeys=Object.keys(appData.blastVibration||{}).filter(k=>k.startsWith(p.id+'_'));
+      const iKeys=Object.keys(appData.inclinometerData||{}).filter(k=>k.startsWith(p.id+'_'));
+      let tagHTML='<span class="tag">'+p.area+'</span>';
+      if(mKeys.length>0)tagHTML+='<span class="tag success">位移'+mKeys.length+'期</span>';
+      if(aKeys.length>0)tagHTML+='<span class="tag purple">锚杆应力'+aKeys.length+'期</span>';
+      if(bKeys.length>0)tagHTML+='<span class="tag warn">爆破'+bKeys.length+'期</span>';
+      if(iKeys.length>0)tagHTML+='<span class="tag cyan">测斜'+iKeys.length+'期</span>';
+      if(mKeys.length===0&&aKeys.length===0&&bKeys.length===0&&iKeys.length===0)tagHTML+='<span class="tag neutral">暂无数据</span>';
+      projHTML+='<div class="project-card"><h4>'+p.name+'</h4><div class="tags">'+tagHTML+'</div><div class="meta">'+p.desc+'</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="switchPanel(\'process\');$(\'processProject\').value=\''+p.id+'\';renderProcess();">查看数据</button><button class="btn btn-sm btn-outline" style="margin-left:4px" onclick="switchPanel(\'import\');$(\'importProject\').value=\''+p.id+'\';onFormatChange();">导入数据</button></div></div>';
+    });
+    projHTML+='</div>';
+  });
+  $('projectList').innerHTML=projHTML||'<div class="empty-state">暂无项目</div>';
+
+  const logs=JSON.parse(localStorage.getItem(LOG_KEY)||'[]');
+  $('recentLogs').innerHTML=logs.slice(-10).reverse().map(l=>'<div style="padding:4px 0;border-bottom:1px solid #f0f0f0">['+l.time+'] <strong>'+l.action+'</strong>: '+l.detail+'</div>').join('')||'<div class="empty-state">暂无操作日志</div>';
+}
+
+function addOperationLog(action,detail){
+  const logs=JSON.parse(localStorage.getItem(LOG_KEY)||'[]');
+  logs.push({time:new Date().toLocaleString(),action,detail,user:currentUser?currentUser.name:'unknown'});
+  if(logs.length>200)logs.shift();localStorage.setItem(LOG_KEY,JSON.stringify(logs));
+}
+function refreshFileInfo(){}
+function updateClock(){
+  const now=new Date();
+  $('clockDisplay').textContent=now.getFullYear()+'-'+(now.getMonth()+1).toString().padStart(2,'0')+'-'+now.getDate().toString().padStart(2,'0')+' '+now.getHours().toString().padStart(2,'0')+':'+now.getMinutes().toString().padStart(2,'0');
+}
+
+// ==================== BASELINE (per-type) ====================
+function populateBaselineSelect(){
+  const sel=$('baselineProject');
+  sel.innerHTML=(appData.projects||[]).map(p=>'<option value="'+p.id+'">['+p.group+'] '+p.name+'</option>').join('');
+}
+
+function onCalcModeChange(){
+  const mode=$('blCalcMode').value;
+  $('baselineCoords').style.display=(mode==='offset'||mode==='chainage')?'block':'none';
+}
+
+function loadBaselineType(){
+  const pjId=$('baselineProject').value;
+  const typeName=$('baselineType').value;
+  const bt=(appData.baselineTypes&&appData.baselineTypes[pjId]&&appData.baselineTypes[pjId][typeName])||getBaselineForType(pjId,typeName);
+  const th=appData.thresholds||DEFAULT_THRESHOLDS;
+
+  $('blCalcMode').value=bt.calcMode||'offset';
+  $('blX0').value=bt.x0||1000;$('blY0').value=bt.y0||1000;
+  $('blX1').value=bt.x1||1100;$('blY1').value=bt.y1||1000;
+  const dx=(bt.x1||1100)-(bt.x0||1000),dy=(bt.y1||1000)-(bt.y0||1000);
+  $('blAzimuth').value=((Math.atan2(dx,dy)*180/Math.PI+360)%360).toFixed(4);
+  $('blLength').value=Math.sqrt(dx*dx+dy*dy).toFixed(4);
+  $('thDispY').value=th.disp_yellow;$('thDispO').value=th.disp_orange;$('thDispR').value=th.disp_red;
+  $('thCumY').value=th.cum_yellow;$('thCumO').value=th.cum_orange;$('thCumR').value=th.cum_red;
+  $('thSettleY').value=th.settle_yellow;$('thSettleO').value=th.settle_orange;$('thSettleR').value=th.settle_red;
+  onCalcModeChange();
+}
+
+function loadBaseline(){loadBaselineType();}
+
+function saveBaseline(){
+  const pjId=$('baselineProject').value;
+  const typeName=$('baselineType').value;
+  const calcMode=$('blCalcMode').value;
+  const x0=parseFloat($('blX0').value),y0=parseFloat($('blY0').value),x1=parseFloat($('blX1').value),y1=parseFloat($('blY1').value);
+
+  if(!appData.baselineTypes)appData.baselineTypes={};
+  if(!appData.baselineTypes[pjId])appData.baselineTypes[pjId]={};
+  appData.baselineTypes[pjId][typeName]={calcMode,x0,y0,x1,y1};
+
+  appData.thresholds={
+    disp_yellow:parseFloat($('thDispY').value),disp_orange:parseFloat($('thDispO').value),disp_red:parseFloat($('thDispR').value),
+    cum_yellow:parseFloat($('thCumY').value),cum_orange:parseFloat($('thCumO').value),cum_red:parseFloat($('thCumR').value),
+    settle_yellow:parseFloat($('thSettleY').value),settle_orange:parseFloat($('thSettleO').value),settle_red:parseFloat($('thSettleR').value)
+  };
+  saveData(appData);
+  toast('基线配置已保存（'+pjId+' - '+typeName+'，'+calcMode+'模式）','success');
+  addOperationLog('基线配置','更新 '+pjId+' '+typeName+' 基线('+calcMode+')');
+}
+
+// ==================== IMPORT ====================
+function populateImportSelect(){
+  const sel=$('importProject');
+  sel.innerHTML=(appData.projects||[]).map(p=>'<option value="'+p.id+'">['+p.group+'] '+p.name+'</option>').join('');
+  $('importDate').value=formatDate(new Date());
+}
+
+function onFormatChange(){
+  const fmt=$('importFormat').value;
+  $('importCalcModeRow').style.display=(fmt==='A')?'flex':'none';
+  $('manualBaselineRow').style.display='none';
+  showImportHint();
+}
+
+function onBaselineSourceChange(){
+  $('manualBaselineRow').style.display=$('importBaselineSource').value==='manual'?'block':'none';
+}
+
+function showImportHint(){
+  const fmt=$('importFormat').value;
+  const hints={
+    'A':'<strong>格式A（可选用偏距法或桩号法）：</strong>每行7列：点名 X初始 Y初始 Z初始 X当前 Y当前 Z当前<br>偏距法：d=((yi-y0)*(x1-x0)-(xi-x0)*(y1-y0))/L → 垂直偏移距离<br>桩号法：chain=((xi-x0)*(x1-x0)+(yi-y0)*(y1-y0))/L → 沿基线投影距离<br>沉降=Z当前-Z初始',
+    'B':'<strong>格式B：</strong>每行3列：点名 H初始 H当前<br>沉降量 = H当前 - H初始',
+    'C':'<strong>格式C：</strong>每行3列：孔号 深度(m) 累计位移(mm)<br>支持同一孔号多行（不同深度）',
+    'D':'<strong>格式D：</strong>每行3列：点名 应力值(MPa) 状态<br>状态可选：拉/压，留空自动判断（正值拉、负值压）',
+    'E':'<strong>格式E：</strong>每行2列：点名 水位高程(m)',
+    'F':'<strong>格式F：</strong>每行7列：点名 X速度(cm/s) Y速度 Z速度 X频率(Hz) Y频率 Z频率',
+    'G':'<strong>格式G：</strong>每行2列：点名 测线长度(mm)',
+    'H':'<strong>格式H：</strong>每行2列：区域名 堆载高度(m)'
+  };
+  $('importHint').innerHTML=hints[fmt]||'';
+  onFormatChange();
+}
+
+function importData(){
+  const pjId=$('importProject').value,date=$('importDate').value,fmt=$('importFormat').value,raw=$('importData').value.trim(),isCum=$('importCumulative').checked;
+  if(!pjId||!date||!raw){toast('请填写完整信息','error');return;}
+  const lines=raw.split('\n').filter(l=>l.trim()),key=pjId+'_'+date;
+  let records=[],count=0;
+
+  try{
+    if(fmt==='A'){
+      // Get baseline - from type config, or manual input
+      let bl=null,calcMode='offset';
+      if($('importBaselineSource').value==='manual'){
+        bl={x0:parseFloat($('manX0').value),y0:parseFloat($('manY0').value),x1:parseFloat($('manX1').value),y1:parseFloat($('manY1').value)};
+        calcMode=$('importCalcMode').value;
+      }else{
+        const typeName='displacement';
+        bl=getBaselineForType(pjId,typeName);
+        calcMode=$('importCalcMode').value;
+      }
+      if(!bl||isNaN(bl.x0)){toast('基线参数无效，请先配置基线','error');return;}
+
+      lines.forEach(line=>{
+        const parts=line.trim().split(/[\t ]+/);
+        if(parts.length<7)return;
+        const ix=parseFloat(parts[1]),iy=parseFloat(parts[2]),iz=parseFloat(parts[3]);
+        const cx=parseFloat(parts[4]),cy=parseFloat(parts[5]),cz=parseFloat(parts[6]);
+        const result=calcDisplacement(ix,iy,iz,cx,cy,cz,bl,calcMode);
+        let cumDisp=result.dDisp,cumSettle=result.settle;
+        if(isCum){
+          const prevKeys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')&&k!==key).sort();
+          if(prevKeys.length>0){
+            const prevRecords=appData.measurements[prevKeys[prevKeys.length-1]];
+            const prev=prevRecords.find(r=>r.point===parts[0]);
+            if(prev){cumDisp=parseFloat((prev.cumDisp+result.dDisp).toFixed(2));cumSettle=parseFloat(((prev.cumSettle!=null?prev.cumSettle+result.settle:result.settle)).toFixed(2));}
+          }
+        }
+        records.push({point:parts[0],ix,iy,iz,cx,cy,cz,dInit:result.dInit,dCurr:result.dCurr,disp:result.dDisp,settle:result.settle,cumDisp,cumSettle,calcMode});
+        count++;
+      });
+      if(!appData.measurements)appData.measurements={};
+      appData.measurements[key]=records;
+    }else if(fmt==='B'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<3)return;const hi=parseFloat(parts[1]),hc=parseFloat(parts[2]),settle=parseFloat(((hc-hi)*1000).toFixed(2));records.push({point:parts[0],hi,hc,settle,cumSettle:settle});count++;});if(!appData.measurements)appData.measurements={};appData.measurements[key]=records;}
+    else if(fmt==='C'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<3)return;records.push({hole:parts[0],depth:parseFloat(parts[1]),cumDisp:parseFloat(parts[2])});count++;});if(!appData.inclinometerData)appData.inclinometerData={};appData.inclinometerData[key]=records;}
+    else if(fmt==='D'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;const stress=parseFloat(parts[1]),status=parts[2]||(stress>=0?'拉':'压');records.push({point:parts[0],stress,status});count++;});if(!appData.anchorStress)appData.anchorStress={};appData.anchorStress[key]=records;}
+    else if(fmt==='E'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;records.push({point:parts[0],level:parseFloat(parts[1])});count++;});if(!appData.waterLevel)appData.waterLevel={};appData.waterLevel[key]=records;}
+    else if(fmt==='F'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<7)return;records.push({point:parts[0],chX:parseFloat(parts[1]),chY:parseFloat(parts[2]),chZ:parseFloat(parts[3]),freqX:parseFloat(parts[4]),freqY:parseFloat(parts[5]),freqZ:parseFloat(parts[6])});count++;});if(!appData.blastVibration)appData.blastVibration={};appData.blastVibration[key]=records;}
+    else if(fmt==='G'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;records.push({point:parts[0],length:parseFloat(parts[1])});count++;});if(!appData.convergence)appData.convergence={};appData.convergence[key]=records;}
+    else if(fmt==='H'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;records.push({area:parts[0],height:parseFloat(parts[1])});count++;});if(!appData.stackingHeight)appData.stackingHeight={};appData.stackingHeight[key]=records;}
+    saveData(appData);
+    const typeNames={D:'锚杆应力',E:'地下水位',F:'爆破振动',G:'收敛监测',H:'堆载高度',A:'位移+沉降',B:'沉降',C:'测斜'};
+    toast('成功导入 '+count+' 条'+((typeNames[fmt])||'')+'数据','success');
+    addOperationLog('数据导入','格式'+fmt+' '+count+'条 → '+pjId+(fmt==='A'?' ('+($('importCalcMode').value==='chainage'?'桩号法':'偏距法')+')':''));
+    renderImportPreview(records,fmt);
+  }catch(e){toast('导入失败: '+e.message,'error');}
+}
+
+function renderImportPreview(records,fmt){
+  if(!records||records.length===0){$('importPreview').innerHTML='';return;}
+  const sample=records.slice(0,20);let cols=[],html='';
+  if(fmt==='A')cols=['点名','X初始','Y初始','Z初始','X当前','Y当前','Z当前','位移mm','沉降mm','累计位移','累计沉降'];
+  else if(fmt==='D')cols=['点名','应力(MPa)','状态'];
+  else if(fmt==='E')cols=['点名','水位(m)'];
+  else if(fmt==='F')cols=['点名','CH_X(cm/s)','CH_Y','CH_Z','Freq_X','Freq_Y','Freq_Z'];
+  else if(fmt==='G')cols=['点名','测线长度(mm)'];
+  else if(fmt==='H')cols=['区域','堆高(m)'];
+  else cols=['点名','深度(m)','位移(mm)'];
+  html='<table><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';
+  sample.forEach(r=>{
+    html+='<tr>';
+    if(fmt==='A')html+='<td>'+r.point+'</td><td>'+r.ix+'</td><td>'+r.iy+'</td><td>'+r.iz+'</td><td>'+r.cx+'</td><td>'+r.cy+'</td><td>'+r.cz+'</td><td>'+r.disp+'</td><td>'+r.settle+'</td><td>'+r.cumDisp+'</td><td>'+r.cumSettle+'</td>';
+    else if(fmt==='D')html+='<td>'+r.point+'</td><td>'+r.stress+'</td><td>'+r.status+'</td>';
+    else if(fmt==='E')html+='<td>'+r.point+'</td><td>'+r.level+'</td>';
+    else if(fmt==='F')html+='<td>'+r.point+'</td><td>'+r.chX+'</td><td>'+r.chY+'</td><td>'+r.chZ+'</td><td>'+r.freqX+'</td><td>'+r.freqY+'</td><td>'+r.freqZ+'</td>';
+    else if(fmt==='G')html+='<td>'+r.point+'</td><td>'+r.length+'</td>';
+    else if(fmt==='H')html+='<td>'+r.area+'</td><td>'+r.height+'</td>';
+    else html+='<td>'+r.hole+'</td><td>'+r.depth+'</td><td>'+r.cumDisp+'</td>';
+    html+='</tr>';
+  });
+  html+='</tbody></table>';
+  if(records.length>20)html+='<div style="padding:8px;color:#999;text-align:center">...共 '+records.length+' 条，仅显示前20条</div>';
+  $('importPreview').innerHTML=html;
+}
+
+function handleExcelImport(){
+  const file=$('excelFile').files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    try{const wb=XLSX.read(e.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const data=XLSX.utils.sheet_to_json(ws,{header:1});const rows=data.filter(r=>r.length>=2).map(r=>r.join('\t'));$('importData').value=rows.join('\n');toast('已从Excel读取 '+rows.length+' 行','info');}catch(err){toast('Excel解析失败: '+err.message,'error');}
+  };reader.readAsArrayBuffer(file);
+}
+
+// ==================== PROCESSING ====================
+function populateProcessSelect(){
+  const sel=$('processProject');sel.innerHTML=(appData.projects||[]).map(p=>'<option value="'+p.id+'">['+p.group+'] '+p.name+'</option>').join('');
+  populateProcessDates();
+}
+function populateProcessDates(){
+  const pjId=$('processProject').value,keys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')).sort();
+  const dates=keys.map(k=>k.replace(pjId+'_',''));const sel=$('processDate');sel.innerHTML=dates.map(d=>'<option value="'+d+'">'+d+'</option>').join('');
+  if(dates.length>0)renderProcess();
+}
+
+function renderProcess(){
+  const pjId=$('processProject').value,date=$('processDate').value,compare=$('processCompare').value,th=appData.thresholds||DEFAULT_THRESHOLDS;
+  if(!pjId||!date)return;
+  const key=pjId+'_'+date,records=appData.measurements[key]||[];
+  if(records.length===0){$('dispTable').innerHTML='<div class="empty-state">无数据</div>';$('settleTable').innerHTML='';$('alertInfo').innerHTML='';return;}
+  let compareDate='';
+  if(compare==='prev'){const keys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')).sort();const idx=keys.indexOf(key);if(idx>0)compareDate=keys[idx-1].replace(pjId+'_','');}
+  else if(compare==='first'){const keys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')).sort();if(keys.length>0)compareDate=keys[0].replace(pjId+'_','');}
+  else{compareDate=$('processCompareDate').value;}
+
+  // Show calc mode info
+  const calcModeInfo=records.length>0&&records[0].calcMode ? (' ('+(records[0].calcMode==='chainage'?'桩号法':'偏距法')+')') : '';
+
+  let dispHTML='<table><thead><tr><th>测点</th><th>本期位移'+calcModeInfo+'</th><th>累计位移</th>';
+  if(compareDate&&compareDate!==date)dispHTML+='<th>对比期位移</th><th>变化量</th>';
+  dispHTML+='<th>速率(mm/d)</th><th>预警</th></tr></thead><tbody>';
+  let settleHTML='<table><thead><tr><th>测点</th><th>本期沉降</th><th>累计沉降</th>';
+  if(compareDate&&compareDate!==date)settleHTML+='<th>对比期沉降</th><th>变化量</th>';
+  settleHTML+='<th>速率(mm/d)</th><th>预警</th></tr></thead><tbody>';
+  let alerts=[];
+  records.forEach(r=>{
+    const cumDisp=r.cumDisp||0,cumSettle=r.cumSettle||0,rateDisp=parseFloat((r.disp/7).toFixed(2)),rateSettle=parseFloat(((r.settle||0)/7).toFixed(2));
+    const dispClass=Math.abs(cumDisp)>=th.cum_red?'alert-row':Math.abs(cumDisp)>=th.cum_orange?'alert-row':'';
+    const settleClass=Math.abs(cumSettle)>=th.settle_red?'alert-row':Math.abs(cumSettle)>=th.settle_orange?'alert-row':'';
+    const dispAlert=Math.abs(cumDisp)>=th.cum_red?'red':Math.abs(cumDisp)>=th.cum_orange?'orange':Math.abs(cumDisp)>=th.cum_yellow?'yellow':'';
+    const settleAlert=Math.abs(cumSettle)>=th.settle_red?'red':Math.abs(cumSettle)>=th.settle_orange?'orange':Math.abs(cumSettle)>=th.settle_yellow?'yellow':'';
+    if(dispAlert)alerts.push({point:r.point,type:'位移',value:cumDisp,level:dispAlert});
+    if(settleAlert)alerts.push({point:r.point,type:'沉降',value:cumSettle,level:settleAlert});
+    dispHTML+='<tr class="'+dispClass+'"><td>'+r.point+'</td><td>'+r.disp+'</td><td class="'+(dispAlert?'alert-cell':'')+'">'+cumDisp+'</td>';
+    if(compareDate&&compareDate!==date){const cRecords=appData.measurements[pjId+'_'+compareDate]||[];const cr=cRecords.find(x=>x.point===r.point);const cDisp=cr?cr.disp:'-';const delta=cr?parseFloat((r.disp-cr.disp).toFixed(2)):'-';dispHTML+='<td>'+cDisp+'</td><td>'+delta+'</td>';}
+    dispHTML+='<td>'+rateDisp+'</td><td>'+dispAlert+'</td></tr>';
+    settleHTML+='<tr class="'+settleClass+'"><td>'+r.point+'</td><td>'+(r.settle||'-')+'</td><td class="'+(settleAlert?'alert-cell':'')+'">'+cumSettle+'</td>';
+    if(compareDate&&compareDate!==date){const cRecords=appData.measurements[pjId+'_'+compareDate]||[];const cr=cRecords.find(x=>x.point===r.point);const cSettle=cr&&cr.settle!=null?cr.settle:'-';const sDelta=cr&&cr.settle!=null?parseFloat((r.settle-cr.settle).toFixed(2)):'-';settleHTML+='<td>'+cSettle+'</td><td>'+sDelta+'</td>';}
+    settleHTML+='<td>'+rateSettle+'</td><td>'+settleAlert+'</td></tr>';
+  });
+  dispHTML+='</tbody></table>';$('dispTable').innerHTML=dispHTML;$('settleTable').innerHTML=settleHTML;
+  $('alertInfo').innerHTML=alerts.length>0?alerts.map(a=>'<span class="badge badge-'+(a.level==='red'?'red':'orange')+'">'+a.point+': '+a.type+'='+a.value+'mm ('+a.level+')</span> ').join(''):'<span class="badge badge-green">全部正常</span>';
+  populateInclinoHoles();renderTrendChart();
+}
+
+// ==================== INCLINOMETER ====================
+function populateInclinoHoles(){
+  const pjId=$('processProject').value,sel=$('inclinoHole'),holes=new Set();
+  const iKeys=Object.keys(appData.inclinometerData||{}).filter(k=>k.startsWith(pjId+'_'));
+  iKeys.forEach(k=>{(appData.inclinometerData[k]||[]).forEach(r=>{if(r.hole)holes.add(r.hole);});});
+  sel.innerHTML=Array.from(holes).sort().map(h=>'<option value="'+h+'">'+h+'</option>').join('');
+  if(holes.size>0)renderInclinoChart();
+}
+function renderInclinoChart(){
+  const pjId=$('processProject').value,hole=$('inclinoHole').value;if(!hole)return;
+  const iKeys=Object.keys(appData.inclinometerData||{}).filter(k=>k.startsWith(pjId+'_')).sort(),datasets=[];
+  iKeys.forEach((key,idx)=>{const date=key.replace(pjId+'_',''),records=(appData.inclinometerData[key]||[]).filter(r=>r.hole===hole);if(records.length===0)return;records.sort((a,b)=>a.depth-b.depth);datasets.push({label:date,data:records.map(r=>({x:r.cumDisp,y:r.depth})),borderColor:COLORS28[idx%COLORS28.length],backgroundColor:'transparent',borderWidth:2,pointRadius:4});});
+  const ctx=$('inclinoCanvas'),existing=Chart.getChart(ctx);if(existing)existing.destroy();if(datasets.length===0)return;
+  new Chart(ctx,{type:'line',data:{datasets},options:{responsive:true,maintainAspectRatio:false,scales:{x:{title:{display:true,text:'累计位移 (mm)'},type:'linear',position:'bottom'},y:{title:{display:true,text:'深度 (m)'},reverse:true}},plugins:{title:{display:true,text:'测斜管 '+hole+' 深度-位移剖面图'},legend:{position:'bottom'}}}});
+}
+
+// ==================== TREND CHART ====================
+function populateTrendSelect(){const sel=$('trendProject');sel.innerHTML=(appData.projects||[]).map(p=>'<option value="'+p.id+'">'+p.name+'</option>').join('');}
+function buildTrendData(pjId){
+  const allDatesSet=new Set(),pointValuesMap={};
+  const mKeys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')).sort();
+  mKeys.forEach(key=>{const date=key.replace(pjId+'_','');allDatesSet.add(date);const records=appData.measurements[key];if(!records||records.length===0)return;records.forEach(r=>{if(!r.point)return;if(!pointValuesMap[r.point])pointValuesMap[r.point]={};const v=r.cumDisp!=null?r.cumDisp:(r.disp!=null?r.disp:null);if(v!=null)pointValuesMap[r.point][date]=parseFloat(v.toFixed(2));});});
+  return {allDates:Array.from(allDatesSet).sort(),pointValuesMap};
+}
+function buildTrendDatasets(allDates,pointValuesMap){
+  const pointList=Object.keys(pointValuesMap).sort(),datasets=[];
+  pointList.forEach((point,idx)=>{const color=COLORS28[idx%COLORS28.length],data=allDates.map(date=>pointValuesMap[point][date]??null);datasets.push({label:point,data,borderColor:color,backgroundColor:color,borderWidth:2,pointRadius:4,pointHoverRadius:6,tension:0,fill:false,spanGaps:false});});
+  return datasets;
+}
+function renderTrendChart(){
+  const pjId=$('trendProject').value;if(!pjId)return;
+  const {allDates,pointValuesMap}=buildTrendData(pjId),datasets=buildTrendDatasets(allDates,pointValuesMap);
+  const ctx=$('trendCanvas'),existing=Chart.getChart(ctx);if(existing)existing.destroy();if(datasets.length===0)return;
+  new Chart(ctx,{type:'line',data:{labels:allDates,datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:false},plugins:{title:{display:true,text:'累计位移趋势图 ('+datasets.length+'个测点)'},legend:{position:'top',labels:{boxWidth:12,font:{size:10},padding:6}}},scales:{x:{title:{display:true,text:'日期'},grid:{display:true,color:'rgba(0,0,0,0.06)'}},y:{title:{display:true,text:'累计位移 (mm)'},grid:{color:'rgba(0,0,0,0.06)'}}}}});
+}
+
+// ==================== HISTORY ====================
+function populateHistorySelect(){const sel=$('histProject');sel.innerHTML=(appData.projects||[]).map(p=>'<option value="'+p.id+'">['+p.group+'] '+p.name+'</option>').join('');}
+function renderHistPanel(){
+  const pjId=$('histProject').value,hist=appData.historyCumData[pjId]||{};$('histDate').value=formatDate(new Date());
+  let html='';Object.keys(hist).sort().forEach(point=>{(hist[point]||[]).forEach(e=>{html+='<tr><td>'+point+'</td><td>'+e.date+'</td><td>'+e.cumDisp+'</td><td>'+(e.cumSettle||'-')+'</td><td><button class="btn btn-sm btn-danger" onclick="deleteHistRecord(\''+pjId+'\',\''+point+'\',\''+e.date+'\')">删除</button></td></tr>';});});
+  $('histTable').querySelector('tbody').innerHTML=html||'<tr><td colspan="5" style="text-align:center;color:#999">暂无历史累计数据</td></tr>';
+}
+function addHistRecord(){
+  const pjId=$('histProject').value,point=$('histPoint').value.trim(),date=$('histDate').value,cumDisp=parseFloat($('histCumDisp').value),cumSettle=parseFloat($('histCumSettle').value);
+  if(!pjId||!point||!date||isNaN(cumDisp)){toast('请填写完整信息','error');return;}
+  if(!appData.historyCumData)appData.historyCumData={};if(!appData.historyCumData[pjId])appData.historyCumData[pjId]={};
+  if(!appData.historyCumData[pjId][point])appData.historyCumData[pjId][point]=[];
+  appData.historyCumData[pjId][point].push({date,cumDisp,cumSettle:isNaN(cumSettle)?null:cumSettle});
+  saveData(appData);renderHistPanel();toast('历史记录已添加','success');addOperationLog('历史数据','添加 '+point+' 历史记录');
+}
+function deleteHistRecord(pjId,point,date){
+  if(!confirm('确定删除 '+point+' '+date+' 的历史记录？'))return;
+  if(!appData.historyCumData[pjId])return;
+  appData.historyCumData[pjId][point]=(appData.historyCumData[pjId][point]||[]).filter(e=>e.date!==date);
+  if(appData.historyCumData[pjId][point].length===0)delete appData.historyCumData[pjId][point];
+  saveData(appData);renderHistPanel();toast('已删除','info');
+}
+function handleHistExcel(){
+  const file=$('histExcel').files[0];if(!file)return;const reader=new FileReader();
+  reader.onload=function(e){try{const wb=XLSX.read(e.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const data=XLSX.utils.sheet_to_json(ws,{header:1});const pjId=$('histProject').value;let count=0;data.forEach((row,i)=>{if(i===0||row.length<3)return;const point=String(row[0]).trim(),date=String(row[1]).trim(),cumDisp=parseFloat(row[2]);if(!point||!date||isNaN(cumDisp))return;if(!appData.historyCumData)appData.historyCumData={};if(!appData.historyCumData[pjId])appData.historyCumData[pjId]={};if(!appData.historyCumData[pjId][point])appData.historyCumData[pjId][point]=[];appData.historyCumData[pjId][point].push({date,cumDisp,cumSettle:row[3]!=null?parseFloat(row[3]):null});count++;});saveData(appData);renderHistPanel();toast('从Excel导入 '+count+' 条历史记录','success');addOperationLog('历史数据','Excel导入 '+count+' 条');}catch(err){toast('Excel解析失败: '+err.message,'error');}};reader.readAsArrayBuffer(file);
+}
+
+// ==================== REPORT ====================
+function populateReportSelect(){
+  const container=$('reportProjects');
+  if(!container)return;
+  const grouped={};
+  (appData.projects||[]).forEach(p=>{
+    if(!grouped[p.group])grouped[p.group]=[];
+    grouped[p.group].push(p);
+  });
+  let html='';
+  const areaOrder=['矿山加工系统','矿山','物流廊道','陆域堆场','码头平台'];
+  const areaColors={'矿山加工系统':'#1a73e8','矿山':'#1a73e8','物流廊道':'#e37400','陆域堆场':'#7b1fa2','码头平台':'#137333'};
+  areaOrder.forEach(group=>{
+    if(!grouped[group])return;
+    html+='<div style="font-weight:600;font-size:13px;color:'+(areaColors[group]||'#555')+';padding:6px 0 2px;margin-top:6px;border-bottom:1px solid #eee">'+group+'</div>';
+    grouped[group].forEach(p=>{
+      const keys=getProjectDataKeys(p.id);
+      const hasData=keys.length>0;
+      const totalPeriods=new Set(keys.map(k=>k.date)).size;
+      html+='<label style="display:flex;align-items:center;gap:4px;font-size:13px;padding:3px 6px;cursor:pointer;"><input type="checkbox" value="'+p.id+'" onchange="onReportProjectChange(this)">'+p.name+' <span style="font-size:11px;color:#999">('+(hasData?totalPeriods+'期':'无数据')+')</span></label>';
+    });
+  });
+  container.innerHTML=html;
+  $('reportDate').value=formatDate(new Date());
+}
+
+function selectAllReportProjects(){
+  document.querySelectorAll('#reportProjects input[type="checkbox"]:not([disabled])').forEach(cb=>{cb.checked=true;});
+}
+function deselectAllReportProjects(){
+  document.querySelectorAll('#reportProjects input[type="checkbox"]').forEach(cb=>{cb.checked=false;});
+}
+function onReportProjectChange(cb){}
+function toggleReportType(){const type=$('reportType').value;$('reportHint').innerHTML=type==='monthly'?'<strong>月报模式</strong>：包含概述、各区域监测成果分析、巡视检查、存在的主要问题与建议、下月工作计划等7章结构，支持多子项目合并，表格含趋势折线图':'<strong>周报模式</strong>：包含概述、区域成果、巡视检查、问题建议、工作计划等节';}
+// ==================== REPORT GENERATION ENGINE ====================
+// Helper: get all measurement keys for a project, sorted by date
+function getProjectDataKeys(pjId){
+  const allKeys=[];
+  ['measurements','anchorStress','blastVibration','convergence','stackingHeight','waterLevel','inclinometerData'].forEach(store=>{
+    const obj=appData[store]||{};
+    Object.keys(obj).filter(k=>k.startsWith(pjId+'_')).forEach(k=>allKeys.push({key:k,date:k.replace(pjId+'_',''),store}));
+  });
+  allKeys.sort((a,b)=>a.date.localeCompare(b.date));
+  return allKeys;
+}
+
+// Helper: get latest measurement date for a project
+function getLatestDate(pjId){
+  const keys=getProjectDataKeys(pjId);
+  return keys.length>0?keys[keys.length-1].date:null;
+}
+
+// Helper: build analysis text for displacement/settlement data
+function buildAnalysisText(records,projName,th){
+  if(!records||records.length===0)return '暂无监测数据。';
+  const dispVals=records.map(r=>Math.abs(r.cumDisp||0)).filter(v=>!isNaN(v));
+  const settleVals=records.map(r=>Math.abs(r.cumSettle||0)).filter(v=>!isNaN(v));
+  const rateVals=records.map(r=>Math.abs(r.disp||0)).filter(v=>!isNaN(v));
+  let text='截至本期，'+projName;
+  if(dispVals.length>0){
+    const maxDisp=Math.max(...dispVals),maxDispPt=records.find(r=>Math.abs(r.cumDisp||0)===maxDisp);
+    text+='已测累计最大位移为'+maxDisp.toFixed(2)+'mm';
+    if(maxDispPt)text+='，位于'+maxDispPt.point+'号监测点';
+    const maxRate=Math.max(...rateVals),maxRatePt=records.find(r=>Math.abs(r.disp||0)===maxRate);
+    text+='；本期最大变化量为'+maxRate.toFixed(2)+'mm';
+    if(maxRatePt)text+='，变化速率为'+(maxRate/7).toFixed(2)+'mm/d，位于'+maxRatePt.point+'号监测点';
+  }
+  if(settleVals.length>0){
+    const maxSettle=Math.max(...settleVals),maxSPt=records.find(r=>Math.abs(r.cumSettle||0)===maxSettle);
+    text+='。已测累计最大沉降为'+maxSettle.toFixed(2)+'mm';
+    if(maxSPt)text+='，位于'+maxSPt.point+'号监测点';
+  }
+  // Warning check
+  const alerts=records.filter(r=>Math.abs(r.cumDisp||0)>=(th.cum_red||80)||Math.abs(r.cumSettle||0)>=(th.settle_red||50));
+  if(alerts.length>0)text+='。**预警**：'+alerts.map(a=>a.point).join('、')+'号测点超红色警戒值';
+  else{
+    const warns=records.filter(r=>Math.abs(r.cumDisp||0)>=(th.cum_yellow||30)||Math.abs(r.cumSettle||0)>=(th.settle_yellow||10));
+    if(warns.length>0)text+='。部分测点超黄色警戒值，需持续关注';
+    else text+='，未超警戒值';
+  }
+  text+='。';
+  return text;
+}
+
+// Helper: create a bordered table cell
+function TCell(text,opts={}){
+  const {TableCell,Paragraph,TextRun,AlignmentType,BorderStyle,WidthType}=docx;
+  const border={top:{style:BorderStyle.SINGLE,size:1,color:'000000'},bottom:{style:BorderStyle.SINGLE,size:1,color:'000000'},left:{style:BorderStyle.SINGLE,size:1,color:'000000'},right:{style:BorderStyle.SINGLE,size:1,color:'000000'}};
+  const trOpts={text:String(text||''),bold:!!opts.header,size:18,font:'宋体'};
+  if(opts.color)trOpts.color=opts.color;
+  return new TableCell({
+    borders:border,
+    width:{size:opts.width||1000,type:WidthType.DXA},
+    shading:opts.header?{fill:'D9E2F3'}:undefined,
+    verticalAlign:'center',
+    children:[new Paragraph({
+      alignment:opts.center?AlignmentType.CENTER:AlignmentType.LEFT,
+      spacing:{before:20,after:20},
+      children:[new TextRun(trOpts)]
+    })]
+  });
+}
+
+// Helper: create a full table from headers and rows
+function buildDataTable(headers,rows,opts={}){
+  const {Table,TableRow,WidthType}=docx;
+  const hcells=headers.map(h=>TCell(h,{header:true,center:true,width:opts.colWidth||1200}));
+  const allRows=[new TableRow({children:hcells,tableHeader:true})];
+  rows.forEach(row=>{
+    const cells=row.map(c=>TCell(c,{center:opts.centerCells!==false,width:opts.colWidth||1200}));
+    allRows.push(new TableRow({children:cells}));
+  });
+  return new Table({rows:allRows,width:{size:100,type:WidthType.PERCENTAGE}});
+}
+
+// Helper: get area-grouped projects with measurement data
+function getReportDataByArea(selectedIds){
+  const areas={};
+  const areaOrder=['矿山加工系统','矿山','物流廊道','陆域堆场','码头平台'];
+  (appData.projects||[]).forEach(p=>{
+    if(!selectedIds.includes(p.id))return;
+    const keys=getProjectDataKeys(p.id);
+    const area=p.group||p.area;
+    if(!areas[area])areas[area]={name:area,projects:[]};
+    areas[area].projects.push({
+      id:p.id,name:p.name,area:p.area||area,desc:p.desc,
+      dataKeys:keys,latestDate:keys.length>0?keys[keys.length-1].date:null,
+      totalPeriods:new Set(keys.map(k=>k.date)).size
+    });
+  });
+  // Reorder areas
+  const ordered={};
+  areaOrder.forEach(a=>{if(areas[a])ordered[a]=areas[a];});
+  Object.keys(areas).forEach(a=>{if(!ordered[a])ordered[a]=areas[a];});
+  return ordered;
+}
+
+// Helper: compute month-over-month change for a project
+function computeMonthlyChange(pjId, latestDate){
+  const allKeys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')).sort();
+  const latestKey=pjId+'_'+latestDate;
+  const idx=allKeys.indexOf(latestKey);
+  const prevKey=idx>0?allKeys[idx-1]:null;
+  const latestRecs=appData.measurements[latestKey]||[];
+  const prevRecs=prevKey?appData.measurements[prevKey]:null;
+  const prevDate=prevKey?prevKey.replace(pjId+'_',''):null;
+  const daysBetween=prevDate?Math.max(1,Math.round((new Date(latestDate)-new Date(prevDate))/86400000)):30;
+
+  const result={};
+  latestRecs.forEach(r=>{
+    const prev=prevRecs?prevRecs.find(x=>x.point===r.point):null;
+    const monthlyDisp=prev&&r.cumDisp!=null&&prev.cumDisp!=null?parseFloat((r.cumDisp-prev.cumDisp).toFixed(2)):(r.disp!=null?parseFloat(r.disp.toFixed(2)):null);
+    const monthlySettle=prev&&r.cumSettle!=null&&prev.cumSettle!=null?parseFloat((r.cumSettle-prev.cumSettle).toFixed(2)):(r.settle!=null?parseFloat(r.settle.toFixed(2)):null);
+    const rateDisp=monthlyDisp!=null?parseFloat((monthlyDisp/daysBetween).toFixed(3)):null;
+    const rateSettle=monthlySettle!=null?parseFloat((monthlySettle/daysBetween).toFixed(3)):null;
+    result[r.point]={monthlyDisp,monthlySettle,rateDisp,rateSettle,daysBetween};
+  });
+  return result;
+}
+
+// Trend chart generator using hidden Canvas + Chart.js
+async function generateTrendChart(pjId,projName,width,height){
+  const {allDates,pointValuesMap}=buildTrendData(pjId);
+  if(allDates.length<2||Object.keys(pointValuesMap).length===0)return null;
+
+  const pointList=Object.keys(pointValuesMap).sort();
+  const displayPoints=pointList.slice(0,28);
+  const datasets=displayPoints.map((point,idx)=>{
+    const color=COLORS28[idx%COLORS28.length];
+    const data=allDates.map(date=>pointValuesMap[point][date]??null);
+    return {label:point,data,borderColor:color,backgroundColor:color,borderWidth:2,pointRadius:3,pointHoverRadius:5,tension:0,fill:false,spanGaps:false};
+  });
+
+  const container=document.createElement('div');
+  container.style.cssText='position:fixed;left:-9999px;top:-9999px;width:'+width+'px;height:'+height+'px;z-index:-1';
+  const canvas=document.createElement('canvas');
+  canvas.width=width;canvas.height=height;
+  container.appendChild(canvas);
+  document.body.appendChild(container);
+
+  return new Promise((resolve)=>{
+    const chart=new Chart(canvas.getContext('2d'),{
+      type:'line',data:{labels:allDates,datasets},
+      options:{responsive:false,animation:false,devicePixelRatio:2,
+        plugins:{title:{display:true,text:projName+' 位移趋势图',font:{size:14},padding:10},legend:{position:'bottom',labels:{boxWidth:10,font:{size:8},padding:3}}},
+        scales:{x:{title:{display:true,text:'日期',font:{size:10}},grid:{display:true,color:'rgba(0,0,0,0.06)'},ticks:{font:{size:8},maxRotation:45,maxTicksLimit:20}},
+          y:{title:{display:true,text:'累计位移量(mm)',font:{size:10}},grid:{color:'rgba(0,0,0,0.06)'}}}
+      }
+    });
+    setTimeout(()=>{
+      try{const b64=canvas.toDataURL('image/png');chart.destroy();container.remove();resolve(b64);}
+      catch(e){container.remove();resolve(null);}
+    },200);
+  });
+}
+
+function generateReport(){
+  const checkboxes=document.querySelectorAll('#reportProjects input[type="checkbox"]:checked');
+  const selectedIds=Array.from(checkboxes).map(cb=>cb.value);
+  if(selectedIds.length===0){toast('请至少选择一个子项目','error');return;}
+
+  const type=$('reportType').value,date=$('reportDate').value;
+  if(type!=='monthly'){toast('周报模式：请先切换到月报模式以生成对标73期的完整月报','info');return;}
+  const reportDate=date||formatDate(new Date());
+  const reportDateObj=new Date(reportDate);
+  const year=reportDateObj.getFullYear(),month=reportDateObj.getMonth()+1;
+  const th=appData.thresholds||DEFAULT_THRESHOLDS;
+  const areas=getReportDataByArea(selectedIds);
+  const totalProjects=Object.values(areas).reduce((s,a)=>s+a.projects.length,0);
+  const totalRecords=Object.values(areas).reduce((s,a)=>s+a.projects.reduce((ss,p)=>ss+p.dataKeys.length,0),0);
+
+  if(totalProjects===0){toast('所选子项目无监测数据，请先导入数据','error');return;}
+
+  toast('正在收集数据并预生成趋势图表...','info');
+  addOperationLog('报告生成','多子项目合并月报 → 共'+totalProjects+'个子项目,'+totalRecords+'条记录');
+
+  // Pre-generate all charts async, then build document
+  (async function buildDoc(){
+    const chartCache={};
+    const areaOrder=['矿山加工系统','矿山','物流廊道','陆域堆场','码头平台'];
+    const chartPromises=[];
+    areaOrder.forEach(ak=>{if(areas[ak])areas[ak].projects.forEach(proj=>{
+      const {allDates}=buildTrendData(proj.id);
+      if(allDates.length>=2)chartPromises.push(generateTrendChart(proj.id,proj.name,800,400).then(b64=>{chartCache[proj.id]=b64;}));
+    });});
+    await Promise.all(chartPromises);
+
+    try{
+      const {Document,Packer,Paragraph,TextRun,HeadingLevel,AlignmentType,Header,Footer,PageNumber,PageBreak,SectionType,BorderStyle,WidthType,Table,TableRow,TableCell,ImageRun}=docx;
+
+      const pageHeader=new Header({children:[new Paragraph({alignment:AlignmentType.CENTER,children:[new TextRun({text:'长九灰岩矿项目监测数据处理系统 - 安全监测月报 '+year+'年'+month+'月（总第73期）',size:16,font:'宋体',color:'333333'})]})]});
+      const pageFooter=new Footer({children:[new Paragraph({alignment:AlignmentType.CENTER,children:[new TextRun({children:[PageNumber.CURRENT],size:18,font:'宋体'})]})]});
+
+      const docChildren=[];
+
+      // ============ COVER ============
+      docChildren.push(new Paragraph({spacing:{before:2400},children:[]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:200},children:[new TextRun({text:'长九灰岩矿项目监测数据处理系统',size:36,bold:true,font:'宋体'})]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:200},children:[new TextRun({text:'安全监测月报',size:32,bold:true,font:'宋体'})]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:100},children:[new TextRun({text:'（合同编号：CJ2023/01）',size:20,font:'宋体',color:'666666'})]}));
+      docChildren.push(new Paragraph({spacing:{before:600},children:[]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:600},children:[new TextRun({text:'监测月报',size:52,bold:true,font:'宋体'})]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:200},children:[new TextRun({text:year+'年'+month+'月（总第73期）',size:30,bold:true,font:'宋体'})]}));
+      docChildren.push(new Paragraph({spacing:{before:800},children:[]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:100},children:[new TextRun({text:'审查：________',size:24,font:'宋体'})]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:100},children:[new TextRun({text:'校核：________',size:24,font:'宋体'})]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:100},children:[new TextRun({text:'编写：________',size:24,font:'宋体'})]}));
+      docChildren.push(new Paragraph({spacing:{before:600},children:[]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:100},children:[new TextRun({text:'中电建安徽长九新材料股份有限公司测量中心',size:22,font:'宋体',bold:true})]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,children:[new TextRun({text:year+'年'+month+'月',size:20,font:'宋体'})]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{before:200},children:[new TextRun({text:'【测量中心专用章】',size:20,font:'宋体',color:'cc0000',italics:true})]}));
+      docChildren.push(new Paragraph({children:[new PageBreak()]}));
+
+      // ============ TOC ============
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:400},children:[new TextRun({text:'目  录',size:30,bold:true,font:'宋体'})]}));
+      docChildren.push(new Paragraph({children:[new TextRun({text:'1  概述',size:22,font:'宋体',bold:true})]}));
+      docChildren.push(new Paragraph({children:[new TextRun({text:'2  矿山监测成果分析',size:22,font:'宋体',bold:true})]}));
+      docChildren.push(new Paragraph({children:[new TextRun({text:'3  物流廊道监测成果分析',size:22,font:'宋体',bold:true})]}));
+      docChildren.push(new Paragraph({children:[new TextRun({text:'4  陆域堆场监测成果分析',size:22,font:'宋体',bold:true})]}));
+      docChildren.push(new Paragraph({children:[new TextRun({text:'5  码头平台沉降监测成果分析',size:22,font:'宋体',bold:true})]}));
+      docChildren.push(new Paragraph({children:[new TextRun({text:'6  存在的主要问题与建议',size:22,font:'宋体',bold:true})]}));
+      docChildren.push(new Paragraph({children:[new TextRun({text:'7  下月工作计划',size:22,font:'宋体',bold:true})]}));
+      docChildren.push(new Paragraph({children:[new PageBreak()]}));
+
+      // ============ CHAPTER 1: 概述 ============
+      docChildren.push(new Paragraph({spacing:{after:200},children:[new TextRun({text:'1  概述',size:30,bold:true,font:'宋体'})]}));
+      docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:'目前，长九（神山）灰岩矿项目安全监测工作内容为现场观测、资料整编、巡视检查、设备维护、监测成果初步分析及后续监测项目仪器安装埋设及观测。主要包括：变形监测网的观测、复测；破碎硐室及运输平硐收敛观测、二期仓内钢立柱监测、物流廊道钢立柱监测、G5排架钢立柱、拉紧装置、廊道排架、金磊长胶与物流廊道搭接处结构及边坡监测。陆域堆场试验区、推广区、成品料各项安全监测、码头平台沉降观测。',size:22,font:'宋体'})]}));
+      docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:'本月进行的主要工作有：',size:22,font:'宋体',bold:true})]}));
+
+      const workItems=[];
+      areaOrder.forEach(ak=>{if(areas[ak]){const names=areas[ak].projects.map(p=>p.name).join('、');workItems.push(ak+'：'+names+'安全监测');}});
+      workItems.forEach((item,i)=>{docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:60},children:[new TextRun({text:(i+1)+'、'+item,size:22,font:'宋体'})]}));});
+
+      docChildren.push(new Paragraph({spacing:{before:200,after:200},children:[new TextRun({text:'表1-1  本月工作完成情况统计',size:22,font:'宋体',bold:true,italics:true})]}));
+      const statHeaders=['序号','监测项目','监测内容','单位','仪器数量','观测频次','本月观测次数','备注'];
+      const statRows=[];let seq=1;
+      areaOrder.forEach(ak=>{if(areas[ak]){statRows.push([String(seq++),ak,'变形/沉降/应力等综合监测','点','-','-','-','多子项目合并']);}});
+      docChildren.push(buildDataTable(statHeaders,statRows,{colWidth:1100}));
+      docChildren.push(new Paragraph({spacing:{before:200,after:120},children:[new TextRun({text:'本期报告涵盖'+totalProjects+'个监测子项目，累计'+totalRecords+'条监测记录。各监测项目数据来源于现场全站仪、水准仪、测斜仪、爆破测振仪等设备，经数据整编和分析后汇入本报告。',size:22,font:'宋体'})]}));
+      docChildren.push(new Paragraph({children:[new PageBreak()]}));
+
+      // ============ CHAPTERS 2-5: ANALYSIS BY AREA ============
+      const chapterNames={'矿山加工系统':'2  矿山监测成果分析','矿山':'2  矿山监测成果分析','物流廊道':'3  物流廊道监测成果分析','陆域堆场':'4  陆域堆场监测成果分析','码头平台':'5  码头平台沉降监测成果分析'};
+      let chNum=2;
+
+      areaOrder.forEach(ao=>{
+        const areaKey=ao;
+        if(!areas[areaKey]||areas[areaKey].projects.length===0)return;
+        docChildren.push(new Paragraph({spacing:{after:200},children:[new TextRun({text:chapterNames[areaKey],size:30,bold:true,font:'宋体'})]}));
+
+        if(areaKey==='矿山加工系统'){
+          docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:200,line:360},children:[new TextRun({text:'位移方向："+"为矿南路方向，"-"为矿北路方向。沉降方向："-"为隆起，"+"为下沉。根据钢结构工程施工质量验收规范中多节柱安装允许偏差中表示，多节柱允许偏移范围为H/1000，且不大于10.0mm，柱全高应小于35.0mm。',size:22,font:'宋体'})]}));
+        }
+
+        let subIdx=1;
+        areas[areaKey].projects.forEach(proj=>{
+          const subTitle=chNum+'.'+subIdx+'  '+proj.name;
+          docChildren.push(new Paragraph({spacing:{before:200,after:120},children:[new TextRun({text:subTitle,size:26,bold:true,font:'宋体'})]}));
+
+          const latestKey=proj.id+'_'+proj.latestDate;
+          const records=appData.measurements[latestKey]||[];
+          const anchorRecords=appData.anchorStress[latestKey]||[];
+          const blastRecords=appData.blastVibration[latestKey]||[];
+          const convergenceRecords=appData.convergence[latestKey]||[];
+          const inclinoRecords=appData.inclinometerData[latestKey]||[];
+
+          if(records.length>0){
+            const analysisText=buildAnalysisText(records,proj.name,th);
+            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:analysisText,size:22,font:'宋体'})]}));
+
+            // Compute monthly changes
+            const monthlyMap=computeMonthlyChange(proj.id,proj.latestDate);
+
+            // Build table — aligned to 73rd report format: 9 columns
+            const tableHeaders=['测点编号','取基准值\n日期','累计变化量\n(mm)','累计沉降量\n(mm)','本月变化量\n(mm)','本月沉降量\n(mm)','变化速率\n(mm/d)','沉降速率\n(mm/d)','备注'];
+            const {TableCell:TC,Paragraph:P,TextRun:TR,AlignmentType:AT,BorderStyle:BS,WidthType:WT}=docx;
+            const border={top:{style:BS.SINGLE,size:1,color:'000000'},bottom:{style:BS.SINGLE,size:1,color:'000000'},left:{style:BS.SINGLE,size:1,color:'000000'},right:{style:BS.SINGLE,size:1,color:'000000'}};
+            const hdrShading={fill:'D9E2F3'};
+
+            // Header row
+            const hcells=tableHeaders.map(h=>new TC({borders:border,width:{size:950,type:WT.DXA},shading:hdrShading,verticalAlign:'center',
+              children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:h.replace('\n',''),bold:true,size:16,font:'宋体'})]})]}));
+            const allRows=[new TableRow({children:hcells,tableHeader:true})];
+
+            // Data rows with red alert highlighting
+            records.slice(0,50).forEach(r=>{
+              const mm=monthlyMap[r.point]||{};
+              const cumDisp=r.cumDisp!=null?r.cumDisp:null;
+              const cumSettle=r.cumSettle!=null?r.cumSettle:null;
+              const mDisp=mm.monthlyDisp;
+              const mSettle=mm.monthlySettle;
+              const rDisp=mm.rateDisp;
+              const rSettle=mm.rateSettle;
+
+              const isRedDisp=cumDisp!=null&&Math.abs(cumDisp)>=th.cum_red;
+              const isRedSettle=cumSettle!=null&&Math.abs(cumSettle)>=th.settle_red;
+              const isRedRate=rDisp!=null&&Math.abs(rDisp)>=1.0;
+              const isAlert=isRedDisp||isRedSettle||isRedRate;
+
+              const cellVals=[
+                {t:r.point,red:false},
+                {t:proj.latestDate,red:false},
+                {t:cumDisp!=null?cumDisp.toFixed(2):'-',red:isRedDisp},
+                {t:cumSettle!=null?cumSettle.toFixed(2):'-',red:isRedSettle},
+                {t:mDisp!=null?mDisp.toFixed(2):'-',red:isRedRate},
+                {t:mSettle!=null?mSettle.toFixed(2):'-',red:isRedSettle},
+                {t:rDisp!=null?rDisp.toFixed(3):'-',red:isRedRate},
+                {t:rSettle!=null?rSettle.toFixed(3):'-',red:isRedSettle},
+                {t:r.calcMode?((r.calcMode==='chainage'?'桩号法':'偏距法')):'',red:false}
+              ];
+
+              const cells=cellVals.map(cv=>{
+                const trOpts={text:cv.t,bold:false,size:16,font:'宋体'};
+                if(cv.red)trOpts.color='FF0000';
+                return new TC({borders:border,width:{size:950,type:WT.DXA},verticalAlign:'center',
+                  children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR(trOpts)]})]});
+              });
+              allRows.push(new TableRow({children:cells}));
+            });
+
+            const tableTitle='表'+chNum+'.'+subIdx+'-1  '+proj.name+'监测成果（共'+records.length+'个测点）';
+            docChildren.push(new Paragraph({spacing:{before:200,after:100},children:[new TextRun({text:tableTitle,size:20,font:'宋体',bold:true,italics:true})]}));
+            docChildren.push(new Table({rows:allRows,width:{size:100,type:WT.PERCENTAGE}}));
+
+            if(records.length>50){
+              docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{before:60},children:[new TextRun({text:'...共'+records.length+'条记录，仅展示前50条',size:18,font:'宋体',color:'999999'})]}));
+            }
+
+            // Embed trend chart
+            if(chartCache[proj.id]){
+              docChildren.push(new Paragraph({spacing:{before:200,after:100},children:[new TextRun({text:'图'+chNum+'.'+subIdx+'-1  '+proj.name+'累计位移趋势图',size:20,font:'宋体',bold:true,italics:true})]}));
+              try{
+                const rawBase64=chartCache[proj.id].replace(/^data:image\/\w+;base64,/,'');
+                docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,children:[new ImageRun({data:rawBase64,transformation:{width:560,height:280},type:'png'})]}));
+              }catch(imgErr){
+                docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,children:[new TextRun({text:'[图表生成失败]',size:18,font:'宋体',color:'999999'})]}));
+              }
+            }
+          }else if(anchorRecords.length>0){
+            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'截至本期，锚杆应力监测数据正常，最大应力值'+Math.max(...anchorRecords.map(r=>Math.abs(r.stress||0))).toFixed(2)+'MPa。',size:22,font:'宋体'})]}));
+          }else if(blastRecords.length>0){
+            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'爆破振动监测数据已采集，未超警戒值，处于稳定状态。',size:22,font:'宋体'})]}));
+          }else if(convergenceRecords.length>0){
+            const maxConv=Math.max(...convergenceRecords.map(r=>Math.abs(r.cumDisp||0)));
+            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'收敛监测数据已采集，最大收敛值'+maxConv.toFixed(2)+'mm，未超警戒值。',size:22,font:'宋体'})]}));
+          }else if(inclinoRecords.length>0){
+            const holes=[...new Set(inclinoRecords.map(r=>r.hole))];
+            const maxDisp=Math.max(...inclinoRecords.map(r=>Math.abs(r.cumDisp||0)));
+            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'测斜孔共'+holes.length+'个，最大累积位移'+maxDisp.toFixed(2)+'mm，未超警戒值。',size:22,font:'宋体'})]}));
+          }else{
+            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'本期暂无监测数据。',size:22,font:'宋体',color:'999999'})]}));
+          }
+          subIdx++;
+        });
+        chNum++;
+        docChildren.push(new Paragraph({children:[new PageBreak()]}));
+      });
+
+      // ============ CHAPTER 6: 问题与建议 ============
+      docChildren.push(new Paragraph({spacing:{before:200,after:200},children:[new TextRun({text:'6  存在的主要问题与建议',size:30,bold:true,font:'宋体'})]}));
+      const allAlerts=[];
+      Object.values(areas).forEach(a=>{a.projects.forEach(p=>{
+        const keys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(p.id+'_')).sort();
+        if(keys.length>0){
+          const recs=appData.measurements[keys[keys.length-1]]||[];
+          recs.forEach(r=>{
+            if(Math.abs(r.cumDisp||0)>=(th.cum_orange||50))allAlerts.push({point:r.point,proj:p.name,val:r.cumDisp,type:'位移'});
+            if(Math.abs(r.cumSettle||0)>=(th.settle_orange||30))allAlerts.push({point:r.point,proj:p.name,val:r.cumSettle,type:'沉降'});
+          });
+        }
+      });});
+      if(allAlerts.length>0){
+        docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'本期监测发现以下预警情况需重点关注：',size:22,font:'宋体',bold:true})]}));
+        allAlerts.slice(0,15).forEach(a=>{docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:60},children:[new TextRun({text:a.proj+' '+a.point+'号测点：'+a.type+'累计'+a.val.toFixed(2)+'mm，超预警值，建议加强监测频率。',size:22,font:'宋体'})]}));});
+      }
+      docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:'共同维护监测设施、监测基准点；建议加强现场协调保护位于仓内的监测设施，以免因孔位被破坏导致永久无法使用。部分监测点位因扬尘影响面临监测误差较大的情况且监测点位脱落，建议试点自动化监测以提升精度和效率。',size:22,font:'宋体'})]}));
+      docChildren.push(new Paragraph({children:[new PageBreak()]}));
+
+      // ============ CHAPTER 7: 下月工作计划 ============
+      docChildren.push(new Paragraph({spacing:{after:200},children:[new TextRun({text:'7  下月工作计划',size:30,bold:true,font:'宋体'})]}));
+      ['对矿山破碎硐收敛、二期网架及仓内钢立柱进行周期性安全监测。','对物流廊道钢立柱及拉紧装置进行周期性安全监测。','对陆域堆场进行周期性安全监测。','对码头平台进行周期性沉降监测。','对矿山、物流廊道、陆域堆场、码头平台进行巡视检查。'].forEach((item,i)=>{
+        docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:80},children:[new TextRun({text:'（'+(i+1)+'）'+item,size:22,font:'宋体'})]}));
+      });
+
+      // ============ BUILD DOCUMENT ============
+      const sectionProps={page:{margin:{top:1440,bottom:1440,left:1440,right:1440},size:{width:11906,height:16838}}};
+      const doc=new Document({sections:[{properties:sectionProps,headers:{default:pageHeader},footers:{default:pageFooter},children:docChildren}]});
+
+      Packer.toBlob(doc).then(blob=>{
+        const url=URL.createObjectURL(blob);
+        const a=document.createElement('a');
+        a.href=url;
+        a.download='长九灰岩矿项目监测数据处理系统_月报_'+year+'年'+month+'月（总第73期）.docx';
+        a.click();
+        URL.revokeObjectURL(url);
+        toast('多子项目合并月报已生成！共'+totalProjects+'个子项目、7章完整结构','success');
+      });
+    }catch(e){
+      console.error(e);
+      toast('报告生成失败: '+e.message,'error');
+    }
+  })();
+}
+
+// ==================== SHARE SELECT ====================
+function populateShareSelect(){const container=$('shareProjects');container.innerHTML=(appData.projects||[]).map(p=>'<label><input type="checkbox" value="'+p.id+'">['+p.group+'] '+p.name+'</label>').join('');}
+
+// ==================== EXPORT / RESTORE ====================
+function exportAllData(){const json=JSON.stringify(appData,null,2);const blob=new Blob([json],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='monitor_backup_'+formatDate(new Date())+'.json';a.click();URL.revokeObjectURL(url);toast('数据已导出','success');addOperationLog('备份','导出全部数据');}
+function handleRestoreFile(){
+  const file=$('restoreFile').files[0];if(!file)return;if(!confirm('恢复数据将覆盖当前所有数据，确定继续？建议先导出备份。'))return;
+  const reader=new FileReader();
+  reader.onload=function(e){try{const data=JSON.parse(e.target.result);appData=data;const defaults=['anchorStress','blastVibration','convergence','stackingHeight','waterLevel','staticLevel','tunnelSettlement','baselineTypes'];defaults.forEach(k=>{if(!(k in appData))appData[k]={};});saveData(appData);renderOverview();populateAllSelects();toast('数据恢复成功','success');addOperationLog('备份','从文件恢复数据');}catch(err){toast('JSON解析失败: '+err.message,'error');}};reader.readAsText(file);
+}
+function showImportAllModal(){document.getElementById('restoreFile').click();}
+
+// ==================== SELF TEST ====================
+function runSelfTest(){
+  const pjId='p06'; // 成品料网架-南侧
+  const testDates=['2026-06-10','2026-06-17','2026-06-26'];
+  const basePoints=[
+    {point:'CN3',ix:3363874.3593,iy:528434.7494,iz:65.8586,cx:3363874.36147,cy:528434.74878,cz:65.85894},
+    {point:'CN6',ix:3363900.6479,iy:528468.2338,iz:65.9606,cx:3363900.64999,cy:528468.23286,cz:65.96313},
+    {point:'CN9',ix:3363981.5413,iy:528571.6850,iz:64.0998,cx:3363981.5408,cy:528571.68565,cz:64.10244},
+    {point:'CN12',ix:3363918.8918,iy:528491.6005,iz:65.5907,cx:3363918.89366,cy:528491.5996,cz:65.5933},
+    {point:'CN15',ix:3363933.1221,iy:528509.7954,iz:64.9860,cx:3363933.12308,cy:528509.79524,cz:64.98786},
+    {point:'CN18',ix:3363960.2740,iy:528544.5135,iz:64.6206,cx:3363960.27416,cy:528544.51348,cz:64.62315},
+    {point:'CN21',ix:3364008.5731,iy:528606.1984,iz:63.7687,cx:3364008.5722,cy:528606.1991,cz:63.7716},
+    {point:'CN23',ix:3364030.1805,iy:528633.8530,iz:63.4190,cx:3364030.1780,cy:528633.8549,cz:63.4217},
+    {point:'CN27',ix:3364053.3515,iy:528663.5654,iz:63.2875,cx:3364053.3479,cy:528663.5687,cz:63.2893},
+    {point:'CN32',ix:3364067.7199,iy:528681.8916,iz:62.9569,cx:3364067.7149,cy:528681.8952,cz:62.9591},
+    {point:'CN37',ix:3364083.9363,iy:528702.6429,iz:62.5130,cx:3364083.9309,cy:528702.6473,cz:62.5108},
+    {point:'CN42',ix:3364100.1610,iy:528723.3218,iz:62.2561,cx:3364100.1583,cy:528723.3233,cz:62.2496},
+    {point:'CN50',ix:3364116.2000,iy:528743.7793,iz:62.1203,cx:3364116.1954,cy:528743.7826,cz:62.1193},
+    {point:'CN53',ix:3364132.5040,iy:528764.6613,iz:62.0419,cx:3364132.4985,cy:528764.6650,cz:62.0407}
+  ];
+  const bl=getBaselineForType(pjId,'displacement');
+  if(!appData.measurements)appData.measurements={};
+  testDates.forEach((date,dateIdx)=>{
+    const key=pjId+'_'+date,records=[];
+    basePoints.forEach(ep=>{
+      const result=calcDisplacement(ep.ix,ep.iy,ep.iz,ep.cx,ep.cy,ep.cz,bl,bl.calcMode||'offset');
+      let cumDisp=result.dDisp,cumSettle=result.settle;
+      if(dateIdx>0){const prevRecords=appData.measurements[pjId+'_'+testDates[dateIdx-1]]||[];const pr=prevRecords.find(r=>r.point===ep.point);if(pr){cumDisp=parseFloat((pr.cumDisp+(result.dDisp-pr.disp)).toFixed(2));cumSettle=parseFloat((pr.cumSettle+(result.settle-pr.settle)).toFixed(2));}}
+      records.push({point:ep.point,ix:ep.ix,iy:ep.iy,iz:ep.iz,cx:ep.cx,cy:ep.cy,cz:ep.cz,dInit:result.dInit,dCurr:result.dCurr,disp:result.dDisp,settle:result.settle,cumDisp,cumSettle,calcMode:bl.calcMode||'offset'});
+    });
+    appData.measurements[key]=records;
+  });
+  saveData(appData);
+  const {allDates,pointValuesMap}=buildTrendData(pjId),datasets=buildTrendDatasets(allDates,pointValuesMap);
+  $('trendProject').value=pjId;renderTrendChart();switchPanel('process');
+  addOperationLog('自检测试','生成3期x14测点模拟数据 ('+(bl.calcMode||'offset')+'模式)');
+  toast('自检完成！14测点x3期数据，计算模式: '+(bl.calcMode||'偏移'),'success');
+}
+
+function loadRealDataTest(){runSelfTest();toast('真实坐标测试数据已加载','info');}
+
+window.runSelfTest=runSelfTest;window.loadRealDataTest=loadRealDataTest;
+// Expose cloud auth + report functions for HTML onclick handlers (needed because try block limits scope)
+window.showCloudAuthModal=showCloudAuthModal;
+window.cloudSignUpFromModal=cloudSignUpFromModal;
+window.cloudSignInFromModal=cloudSignInFromModal;
+window.syncLocalUserFromCloud=syncLocalUserFromCloud;
+window.cloudSignUp=cloudSignUp;
+window.cloudSignIn=cloudSignIn;
+window.doLogin=doLogin;
+window.initApp=initApp;
+window.logout=logout;
+window.selectAllReportProjects=selectAllReportProjects;
+window.deselectAllReportProjects=deselectAllReportProjects;
+window.onReportProjectChange=onReportProjectChange;
+window.generateReport=generateReport;
+
+// ==================== INIT ====================
+function populateAllSelects(){populateBaselineSelect();populateImportSelect();populateProcessSelect();populateTrendSelect();populateHistorySelect();populateReportSelect();populateShareSelect();}
+document.addEventListener('click',function(e){if(e.target.classList.contains('modal-overlay'))e.target.classList.remove('show');});
+
+try {
+initSupabase();
+loadUser();
+if(!currentUser){$('loginOverlay').style.display='flex';}else{$('loginOverlay').style.display='none';initApp();}
+window.__APP_LOADED__ = true;
+} catch(e) {
+window.__APP_ERROR__ = e.message + ' | ' + (e.stack||'').substring(0,200);
+console.error('APP INIT ERROR:', e);
+}
+} catch(e) {
+window.__APP_ERROR__ = 'SCRIPT PARSE ERROR: ' + e.message;
+console.error('APP SCRIPT ERROR:', e);
+}
