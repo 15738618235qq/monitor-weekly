@@ -1102,35 +1102,53 @@ function getLatestDate(pjId){
 }
 
 // Helper: build analysis text for displacement/settlement data
-function buildAnalysisText(records,projName,th){
-  if(!records||records.length===0)return '暂无监测数据。';
+function buildAnalysisText(records,projName,latestDate,th){
+  const {TextRun}=docx;
+  if(!records||records.length===0)return [{text:'暂无监测数据。',bold:false}];
   const dispVals=records.map(r=>Math.abs(r.cumDisp||0)).filter(v=>!isNaN(v));
   const settleVals=records.map(r=>Math.abs(r.cumSettle||0)).filter(v=>!isNaN(v));
   const rateVals=records.map(r=>Math.abs(r.disp||0)).filter(v=>!isNaN(v));
-  let text='截至本期，'+projName;
+  const runs=[];
+  runs.push({text:'截至本期，'+projName,bold:false});
   if(dispVals.length>0){
     const maxDisp=Math.max(...dispVals),maxDispPt=records.find(r=>Math.abs(r.cumDisp||0)===maxDisp);
-    text+='已测累计最大位移为'+maxDisp.toFixed(2)+'mm';
-    if(maxDispPt)text+='，位于'+maxDispPt.point+'号监测点';
+    runs.push({text:'已测累计最大位移为',bold:false});
+    runs.push({text:maxDisp.toFixed(2)+'mm',bold:true});
+    if(maxDispPt){runs.push({text:'，位于',bold:false});runs.push({text:maxDispPt.point+'号监测点',bold:true});}
     const maxRate=Math.max(...rateVals),maxRatePt=records.find(r=>Math.abs(r.disp||0)===maxRate);
-    text+='；本期最大变化量为'+maxRate.toFixed(2)+'mm';
-    if(maxRatePt)text+='，变化速率为'+(maxRate/7).toFixed(2)+'mm/d，位于'+maxRatePt.point+'号监测点';
+    runs.push({text:'；本期最大变化量为',bold:false});
+    runs.push({text:maxRate.toFixed(2)+'mm',bold:true});
+    if(maxRatePt){runs.push({text:'，变化速率为',bold:false});runs.push({text:(maxRate/7).toFixed(2)+'mm/d',bold:true});runs.push({text:'，位于',bold:false});runs.push({text:maxRatePt.point+'号监测点',bold:true});}
   }
   if(settleVals.length>0){
     const maxSettle=Math.max(...settleVals),maxSPt=records.find(r=>Math.abs(r.cumSettle||0)===maxSettle);
-    text+='。已测累计最大沉降为'+maxSettle.toFixed(2)+'mm';
-    if(maxSPt)text+='，位于'+maxSPt.point+'号监测点';
+    runs.push({text:'。已测累计最大沉降为',bold:false});
+    runs.push({text:maxSettle.toFixed(2)+'mm',bold:true});
+    if(maxSPt){runs.push({text:'，位于',bold:false});runs.push({text:maxSPt.point+'号监测点',bold:true});}
   }
   // Warning check
   const alerts=records.filter(r=>Math.abs(r.cumDisp||0)>=(th.cum_red||80)||Math.abs(r.cumSettle||0)>=(th.settle_red||50));
-  if(alerts.length>0)text+='。**预警**：'+alerts.map(a=>a.point).join('、')+'号测点超红色警戒值';
-  else{
+  if(alerts.length>0){
+    runs.push({text:'。',bold:false});
+    runs.push({text:'预警',bold:true,color:'FF0000'});
+    runs.push({text:'：'+alerts.map(a=>a.point).join('、')+'号测点超红色警戒值',bold:true,color:'FF0000'});
+  }else{
     const warns=records.filter(r=>Math.abs(r.cumDisp||0)>=(th.cum_yellow||30)||Math.abs(r.cumSettle||0)>=(th.settle_yellow||10));
-    if(warns.length>0)text+='。部分测点超黄色警戒值，需持续关注';
-    else text+='，未超警戒值';
+    if(warns.length>0)runs.push({text:'。部分测点超黄色警戒值，需持续关注',bold:false});
+    else runs.push({text:'，未超警戒值',bold:false});
   }
-  text+='。';
-  return text;
+  runs.push({text:'。',bold:false});
+  return runs;
+}
+
+function buildAnalysisParagraph(runs){
+  const {Paragraph,TextRun,AlignmentType}=docx;
+  const trs=runs.map(r=>new TextRun({
+    text:r.text,font:'宋体',size:22,
+    bold:r.bold||false,
+    color:r.color||undefined
+  }));
+  return new Paragraph({spacing:{before:100,after:100},children:trs});
 }
 
 // Helper: create a bordered table cell
@@ -1251,10 +1269,13 @@ function generateReport(){
   if(selectedIds.length===0){toast('请至少选择一个子项目','error');return;}
 
   const type=$('reportType').value,date=$('reportDate').value;
-  if(type!=='monthly'){toast('周报模式：请先切换到月报模式以生成对标73期的完整月报','info');return;}
+  if(type!=='monthly'){toast('周报模式：请先切换到月报模式以生成对标第57期格式的完整月报','info');return;}
   const reportDate=date||formatDate(new Date());
   const reportDateObj=new Date(reportDate);
   const year=reportDateObj.getFullYear(),month=reportDateObj.getMonth()+1;
+  const chineseNums=['零','一','二','三','四','五','六','七','八','九','十','十一','十二'];
+  const yearChinese=String(year).split('').map(c=>chineseNums[parseInt(c)]).join('');
+  const monthChinese=chineseNums[month];
   const th=appData.thresholds||DEFAULT_THRESHOLDS;
   const areas=getReportDataByArea(selectedIds);
   const totalProjects=Object.values(areas).reduce((s,a)=>s+a.projects.length,0);
@@ -1265,10 +1286,20 @@ function generateReport(){
   toast('正在收集数据并预生成趋势图表...','info');
   addOperationLog('报告生成','多子项目合并月报 → 共'+totalProjects+'个子项目,'+totalRecords+'条记录');
 
-  // Pre-generate all charts async, then build document
+  // Count total periods per project
+  function getPeriodCount(pjId){
+    const allDates=new Set();
+    ['measurements','anchorStress','blastVibration','convergence','stackingHeight','waterLevel','inclinometerData'].forEach(store=>{
+      Object.keys(appData[store]||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>allDates.add(k.replace(pjId+'_','')));
+    });
+    return allDates.size;
+  }
+
+  // ============ ASYNC BUILD ============
   (async function buildDoc(){
     const chartCache={};
     const areaOrder=['矿山加工系统','矿山','物流廊道','陆域堆场','码头平台'];
+    // Pre-generate charts
     const chartPromises=[];
     areaOrder.forEach(ak=>{if(areas[ak])areas[ak].projects.forEach(proj=>{
       const {allDates}=buildTrendData(proj.id);
@@ -1279,73 +1310,140 @@ function generateReport(){
     try{
       const {Document,Packer,Paragraph,TextRun,HeadingLevel,AlignmentType,Header,Footer,PageNumber,PageBreak,SectionType,BorderStyle,WidthType,Table,TableRow,TableCell,ImageRun}=docx;
 
-      const pageHeader=new Header({children:[new Paragraph({alignment:AlignmentType.CENTER,children:[new TextRun({text:'长九灰岩矿项目监测数据处理系统 - 安全监测月报 '+year+'年'+month+'月（总第73期）',size:16,font:'宋体',color:'333333'})]})]});
+      // Page footer only (no header, matching template)
       const pageFooter=new Footer({children:[new Paragraph({alignment:AlignmentType.CENTER,children:[new TextRun({children:[PageNumber.CURRENT],size:18,font:'宋体'})]})]});
 
       const docChildren=[];
 
-      // ============ COVER ============
-      docChildren.push(new Paragraph({spacing:{before:2400},children:[]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:200},children:[new TextRun({text:'长九灰岩矿项目监测数据处理系统',size:36,bold:true,font:'宋体'})]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:200},children:[new TextRun({text:'安全监测月报',size:32,bold:true,font:'宋体'})]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:100},children:[new TextRun({text:'（合同编号：CJ2023/01）',size:20,font:'宋体',color:'666666'})]}));
-      docChildren.push(new Paragraph({spacing:{before:600},children:[]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:600},children:[new TextRun({text:'监测月报',size:52,bold:true,font:'宋体'})]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:200},children:[new TextRun({text:year+'年'+month+'月（总第73期）',size:30,bold:true,font:'宋体'})]}));
-      docChildren.push(new Paragraph({spacing:{before:800},children:[]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:100},children:[new TextRun({text:'审查：________',size:24,font:'宋体'})]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:100},children:[new TextRun({text:'校核：________',size:24,font:'宋体'})]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:100},children:[new TextRun({text:'编写：________',size:24,font:'宋体'})]}));
-      docChildren.push(new Paragraph({spacing:{before:600},children:[]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:100},children:[new TextRun({text:'中电建安徽长九新材料股份有限公司测量中心',size:22,font:'宋体',bold:true})]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,children:[new TextRun({text:year+'年'+month+'月',size:20,font:'宋体'})]}));
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{before:200},children:[new TextRun({text:'【测量中心专用章】',size:20,font:'宋体',color:'cc0000',italics:true})]}));
+      // ============ COVER PAGE (aligned to 第57期 template) ============
+      // Top spacing
+      docChildren.push(new Paragraph({spacing:{before:1800},children:[]}));
+      // Project name line 1
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:60},children:[new TextRun({text:'长九（神山）灰岩矿项目',size:36,bold:true,font:'宋体'})]}));
+      // Subtitle
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:60},children:[new TextRun({text:'安全监测工程',size:32,bold:true,font:'宋体'})]}));
+      // Contract number
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:400},children:[new TextRun({text:'（合同编号：CJ2023/01）',size:20,font:'宋体',color:'666666'})]}));
+      // Main title with character spacing
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:400},children:[new TextRun({text:'监  测  月  报',size:52,bold:true,font:'宋体'})]}));
+      // Period
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:1200},children:[new TextRun({text:year+'年'+month+'月（总第73期）',size:30,bold:true,font:'宋体'})]}));
+      // Reviewers
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:80},children:[new TextRun({text:'审  查：________',size:24,font:'宋体'})]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:80},children:[new TextRun({text:'校  核：________',size:24,font:'宋体'})]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:800},children:[new TextRun({text:'编  写：________',size:24,font:'宋体'})]}));
+      // Organization
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:80},children:[new TextRun({text:'中电建安徽长九新材料股份有限公司测量中心',size:22,font:'宋体',bold:true})]}));
+      // Date in Chinese
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{before:200},children:[new TextRun({text:'二\u3007'+yearChinese.substring(2)+'年'+monthChinese+'月',size:22,font:'宋体'})]}));
       docChildren.push(new Paragraph({children:[new PageBreak()]}));
 
-      // ============ TOC ============
+      // ============ TABLE OF CONTENTS ============
       docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:400},children:[new TextRun({text:'目  录',size:30,bold:true,font:'宋体'})]}));
-      docChildren.push(new Paragraph({children:[new TextRun({text:'1  概述',size:22,font:'宋体',bold:true})]}));
-      docChildren.push(new Paragraph({children:[new TextRun({text:'2  矿山监测成果分析',size:22,font:'宋体',bold:true})]}));
-      docChildren.push(new Paragraph({children:[new TextRun({text:'3  物流廊道监测成果分析',size:22,font:'宋体',bold:true})]}));
-      docChildren.push(new Paragraph({children:[new TextRun({text:'4  陆域堆场监测成果分析',size:22,font:'宋体',bold:true})]}));
-      docChildren.push(new Paragraph({children:[new TextRun({text:'5  码头平台沉降监测成果分析',size:22,font:'宋体',bold:true})]}));
-      docChildren.push(new Paragraph({children:[new TextRun({text:'6  存在的主要问题与建议',size:22,font:'宋体',bold:true})]}));
-      docChildren.push(new Paragraph({children:[new TextRun({text:'7  下月工作计划',size:22,font:'宋体',bold:true})]}));
+      const tocItems=[
+        '1  概述',
+        '2  矿山监测成果分析',
+        '3  物流廊道监测成果分析',
+        '4  陆域堆场监测成果分析',
+        '5  码头平台沉降监测成果分析',
+        '6  存在的主要问题与建议',
+        '7  下月工作计划'
+      ];
+      tocItems.forEach(item=>{
+        docChildren.push(new Paragraph({spacing:{after:100},children:[new TextRun({text:item,size:24,bold:true,font:'宋体'})]}));
+      });
       docChildren.push(new Paragraph({children:[new PageBreak()]}));
 
       // ============ CHAPTER 1: 概述 ============
       docChildren.push(new Paragraph({spacing:{after:200},children:[new TextRun({text:'1  概述',size:30,bold:true,font:'宋体'})]}));
-      docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:'目前，长九（神山）灰岩矿项目安全监测工作内容为现场观测、资料整编、巡视检查、设备维护、监测成果初步分析及后续监测项目仪器安装埋设及观测。主要包括：变形监测网的观测、复测；破碎硐室及运输平硐收敛观测、二期仓内钢立柱监测、物流廊道钢立柱监测、G5排架钢立柱、拉紧装置、廊道排架、金磊长胶与物流廊道搭接处结构及边坡监测。陆域堆场试验区、推广区、成品料各项安全监测、码头平台沉降观测。',size:22,font:'宋体'})]}));
-      docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:'本月进行的主要工作有：',size:22,font:'宋体',bold:true})]}));
 
+      // 1.1 监测工作概况
+      docChildren.push(new Paragraph({spacing:{before:200,after:120},children:[new TextRun({text:'1.1  监测工作概况',size:26,bold:true,font:'宋体'})]}));
+      docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:'目前，长九（神山）灰岩矿项目安全监测工作内容为现场观测、资料整编、巡视检查、设备维护、监测成果初步分析及后续监测项目仪器安装埋设及观测。主要包括：变形监测网的观测、复测；破碎硐室及运输平硐收敛观测、二期仓内钢立柱监测、物流廊道钢立柱监测、G5排架钢立柱、拉紧装置、廊道排架、金磊长胶与物流廊道搭接处结构及边坡监测；陆域堆场试验区、推广区、成品料各项安全监测；码头平台沉降观测。',size:22,font:'宋体'})]}));
+
+      // 1.2 本月主要工作
+      docChildren.push(new Paragraph({spacing:{before:200,after:120},children:[new TextRun({text:'1.2  本月主要工作',size:26,bold:true,font:'宋体'})]}));
       const workItems=[];
-      areaOrder.forEach(ak=>{if(areas[ak]){const names=areas[ak].projects.map(p=>p.name).join('、');workItems.push(ak+'：'+names+'安全监测');}});
-      workItems.forEach((item,i)=>{docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:60},children:[new TextRun({text:(i+1)+'、'+item,size:22,font:'宋体'})]}));});
+      areaOrder.forEach(ak=>{
+        if(areas[ak]){
+          const names=areas[ak].projects.map(p=>p.name);
+          if(ak==='矿山加工系统'||ak==='矿山')workItems.push('对矿山破碎硐室收敛、二期网架及仓内钢立柱进行周期性安全监测');
+          if(ak==='物流廊道')workItems.push('对物流廊道钢立柱、拉紧装置及廊道排架进行周期性安全监测');
+          if(ak==='陆域堆场')workItems.push('对陆域堆场成品料、试验区及推广区进行周期性安全监测');
+          if(ak==='码头平台')workItems.push('对码头平台进行周期性沉降监测');
+        }
+      });
+      workItems.push('对矿山、物流廊道、陆域堆场、码头平台进行巡视检查');
+      workItems.forEach((item,i)=>{
+        docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:60},children:[new TextRun({text:'（'+(i+1)+'）'+item,size:22,font:'宋体'})]}));
+      });
 
-      docChildren.push(new Paragraph({spacing:{before:200,after:200},children:[new TextRun({text:'表1-1  本月工作完成情况统计',size:22,font:'宋体',bold:true,italics:true})]}));
+      // 1.3 工作完成情况统计表
+      docChildren.push(new Paragraph({spacing:{before:300,after:150},children:[new TextRun({text:'表1-1  本月工作完成情况统计',size:20,font:'宋体',bold:true,italics:true})]}));
+
+      // Build stat table
       const statHeaders=['序号','监测项目','监测内容','单位','仪器数量','观测频次','本月观测次数','备注'];
-      const statRows=[];let seq=1;
-      areaOrder.forEach(ak=>{if(areas[ak]){statRows.push([String(seq++),ak,'变形/沉降/应力等综合监测','点','-','-','-','多子项目合并']);}});
-      docChildren.push(buildDataTable(statHeaders,statRows,{colWidth:1100}));
-      docChildren.push(new Paragraph({spacing:{before:200,after:120},children:[new TextRun({text:'本期报告涵盖'+totalProjects+'个监测子项目，累计'+totalRecords+'条监测记录。各监测项目数据来源于现场全站仪、水准仪、测斜仪、爆破测振仪等设备，经数据整编和分析后汇入本报告。',size:22,font:'宋体'})]}));
+      const statRows=[];
+      let seq=1;
+      areaOrder.forEach(ak=>{
+        if(!areas[ak])return;
+        const projs=areas[ak].projects;
+        const periodStr=projs.map(p=>getPeriodCount(p.id)).join('/');
+        statRows.push([String(seq++),ak+'区域监测','变形/沉降/应力等','点',String(projs.reduce((s,p)=>s+(appData.measurements[p.id+'_'+(p.latestDate||'')]||[]).length,0)),'按频次','-','包含'+projs.length+'个子项目']);
+      });
+
+      // Stat table using direct docx API for better alignment with template
+      const {TableCell:TC,Paragraph:P,TextRun:TR,AlignmentType:AT,BorderStyle:BS,WidthType:WT}=docx;
+      const border={top:{style:BS.SINGLE,size:1,color:'000000'},bottom:{style:BS.SINGLE,size:1,color:'000000'},left:{style:BS.SINGLE,size:1,color:'000000'},right:{style:BS.SINGLE,size:1,color:'000000'}};
+      const colWidths=[500,1500,1800,500,800,1000,1000,1200];
+      const hcellsStat=statHeaders.map((h,i)=>new TC({borders:border,width:{size:colWidths[i]||1000,type:WT.DXA},verticalAlign:'center',
+        children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:h,bold:true,size:16,font:'宋体'})]})]}));
+      const statAllRows=[new TableRow({children:hcellsStat,tableHeader:true})];
+      statRows.forEach(row=>{
+        const cells=row.map((c,i)=>new TC({borders:border,width:{size:colWidths[i]||1000,type:WT.DXA},verticalAlign:'center',
+          children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:String(c),size:16,font:'宋体'})]})]}));
+        statAllRows.push(new TableRow({children:cells}));
+      });
+      docChildren.push(new Table({rows:statAllRows,width:{size:100,type:WT.PERCENTAGE}}));
+
+      // Overview text
+      docChildren.push(new Paragraph({spacing:{before:200,after:120},indent:{firstLine:480},children:[new TextRun({text:'本期报告涵盖'+totalProjects+'个监测子项目，累计'+totalRecords+'条监测记录。各监测项目数据来源于现场全站仪、水准仪、测斜仪、爆破测振仪等设备，经数据整编和分析后汇入本报告。',size:22,font:'宋体'})]}));
       docChildren.push(new Paragraph({children:[new PageBreak()]}));
 
-      // ============ CHAPTERS 2-5: ANALYSIS BY AREA ============
-      const chapterNames={'矿山加工系统':'2  矿山监测成果分析','矿山':'2  矿山监测成果分析','物流廊道':'3  物流廊道监测成果分析','陆域堆场':'4  陆域堆场监测成果分析','码头平台':'5  码头平台沉降监测成果分析'};
-      let chNum=2;
+      // ============ CHAPTERS 2-5: 各区域监测成果分析 ============
+      const chapterConfig={
+        '矿山加工系统':{chNum:2,title:'矿山监测成果分析',hasDirectionNote:true},
+        '矿山':{chNum:2,title:'矿山监测成果分析',hasDirectionNote:true},
+        '物流廊道':{chNum:3,title:'物流廊道监测成果分析',hasDirectionNote:false},
+        '陆域堆场':{chNum:4,title:'陆域堆场监测成果分析',hasDirectionNote:false},
+        '码头平台':{chNum:5,title:'码头平台沉降监测成果分析',hasDirectionNote:false}
+      };
+      let currentChNum=2;
+      // Track chapter-level sub-section counters
+      let chSubCounters={2:0,3:0,4:0,5:0};
 
       areaOrder.forEach(ao=>{
-        const areaKey=ao;
-        if(!areas[areaKey]||areas[areaKey].projects.length===0)return;
-        docChildren.push(new Paragraph({spacing:{after:200},children:[new TextRun({text:chapterNames[areaKey],size:30,bold:true,font:'宋体'})]}));
+        if(!areas[ao]||areas[ao].projects.length===0)return;
+        const cfg=chapterConfig[ao];
+        if(!cfg)return;
 
-        if(areaKey==='矿山加工系统'){
-          docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:200,line:360},children:[new TextRun({text:'位移方向："+"为矿南路方向，"-"为矿北路方向。沉降方向："-"为隆起，"+"为下沉。根据钢结构工程施工质量验收规范中多节柱安装允许偏差中表示，多节柱允许偏移范围为H/1000，且不大于10.0mm，柱全高应小于35.0mm。',size:22,font:'宋体'})]}));
+        // Chapter title
+        docChildren.push(new Paragraph({spacing:{before:100,after:200},children:[new TextRun({text:cfg.chNum+'  '+cfg.title,size:30,bold:true,font:'宋体'})]}));
+
+        // Direction sign convention note
+        if(cfg.hasDirectionNote){
+          docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:200,line:360},children:[new TextRun({text:'位移方向："+"为矿南路方向，"-"为矿北路方向。沉降方向："-"为隆起，"+"为下沉。根据《钢结构工程施工质量验收规范》中多节柱安装允许偏差中表示，多节柱允许偏移范围为H/1000，且不大于10.0mm，柱全高应小于35.0mm。',size:22,font:'宋体'})]}));
         }
 
-        let subIdx=1;
-        areas[areaKey].projects.forEach(proj=>{
-          const subTitle=chNum+'.'+subIdx+'  '+proj.name;
+        // Determine the chapter sub-section number for this area
+        chSubCounters[cfg.chNum]++;
+
+        // Each project = a sub-subsection (like 2.1, 2.2, etc.)
+        let subIdx=0;
+        areas[ao].projects.forEach(proj=>{
+          subIdx++;
+          const sectionNum=cfg.chNum+'.'+subIdx;
+          const subTitle=sectionNum+'  '+proj.name;
           docChildren.push(new Paragraph({spacing:{before:200,after:120},children:[new TextRun({text:subTitle,size:26,bold:true,font:'宋体'})]}));
 
           const latestKey=proj.id+'_'+proj.latestDate;
@@ -1356,25 +1454,23 @@ function generateReport(){
           const inclinoRecords=appData.inclinometerData[latestKey]||[];
 
           if(records.length>0){
-            const analysisText=buildAnalysisText(records,proj.name,th);
-            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:analysisText,size:22,font:'宋体'})]}));
+            // Analysis paragraph with bold formatting for key numbers
+            const analysisRuns=buildAnalysisText(records,proj.name,proj.latestDate,th);
+            docChildren.push(buildAnalysisParagraph(analysisRuns));
 
             // Compute monthly changes
             const monthlyMap=computeMonthlyChange(proj.id,proj.latestDate);
 
-            // Build table — aligned to 73rd report format: 9 columns
-            const tableHeaders=['测点编号','取基准值\n日期','累计变化量\n(mm)','累计沉降量\n(mm)','本月变化量\n(mm)','本月沉降量\n(mm)','变化速率\n(mm/d)','沉降速率\n(mm/d)','备注'];
-            const {TableCell:TC,Paragraph:P,TextRun:TR,AlignmentType:AT,BorderStyle:BS,WidthType:WT}=docx;
-            const border={top:{style:BS.SINGLE,size:1,color:'000000'},bottom:{style:BS.SINGLE,size:1,color:'000000'},left:{style:BS.SINGLE,size:1,color:'000000'},right:{style:BS.SINGLE,size:1,color:'000000'}};
-            const hdrShading={fill:'D9E2F3'};
+            // Build table matching template format: 测点编号 | 取基准值日期 | 累计变化量 | 本月变化量 | 变化速率 | 累计沉降量 | 本月沉降量 | 沉降速率 | 备注
+            const tableHeaders=['测点编号','取基准值\n日期','累计变化量\n(mm)','本月变化量\n(mm)','变化速率\n(mm/d)','累计沉降量\n(mm)','本月沉降量\n(mm)','沉降速率\n(mm/d)','备注'];
 
-            // Header row
-            const hcells=tableHeaders.map(h=>new TC({borders:border,width:{size:950,type:WT.DXA},shading:hdrShading,verticalAlign:'center',
-              children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:h.replace('\n',''),bold:true,size:16,font:'宋体'})]})]}));
+            const tblColWidths=[850,1000,900,900,850,900,900,850,650];
+            const hcells=tblColWidths.map((w,i)=>new TC({borders:border,width:{size:w,type:WT.DXA},verticalAlign:'center',
+              children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:tableHeaders[i].replace(/\\n/g,''),bold:true,size:16,font:'宋体'})]})]}));
             const allRows=[new TableRow({children:hcells,tableHeader:true})];
 
-            // Data rows with red alert highlighting
-            records.slice(0,50).forEach(r=>{
+            // Build data rows
+            records.slice(0,80).forEach(r=>{
               const mm=monthlyMap[r.point]||{};
               const cumDisp=r.cumDisp!=null?r.cumDisp:null;
               const cumSettle=r.cumSettle!=null?r.cumSettle:null;
@@ -1382,73 +1478,75 @@ function generateReport(){
               const mSettle=mm.monthlySettle;
               const rDisp=mm.rateDisp;
               const rSettle=mm.rateSettle;
+              // Template uses bold text for anomaly values (not color)
+              const isBoldDisp=cumDisp!=null&&Math.abs(cumDisp)>=(th.cum_orange||50);
+              const isBoldSettle=cumSettle!=null&&Math.abs(cumSettle)>=(th.settle_orange||30);
 
-              const isRedDisp=cumDisp!=null&&Math.abs(cumDisp)>=th.cum_red;
-              const isRedSettle=cumSettle!=null&&Math.abs(cumSettle)>=th.settle_red;
-              const isRedRate=rDisp!=null&&Math.abs(rDisp)>=1.0;
-              const isAlert=isRedDisp||isRedSettle||isRedRate;
-
-              const cellVals=[
-                {t:r.point,red:false},
-                {t:proj.latestDate,red:false},
-                {t:cumDisp!=null?cumDisp.toFixed(2):'-',red:isRedDisp},
-                {t:cumSettle!=null?cumSettle.toFixed(2):'-',red:isRedSettle},
-                {t:mDisp!=null?mDisp.toFixed(2):'-',red:isRedRate},
-                {t:mSettle!=null?mSettle.toFixed(2):'-',red:isRedSettle},
-                {t:rDisp!=null?rDisp.toFixed(3):'-',red:isRedRate},
-                {t:rSettle!=null?rSettle.toFixed(3):'-',red:isRedSettle},
-                {t:r.calcMode?((r.calcMode==='chainage'?'桩号法':'偏距法')):'',red:false}
+              const cellDefs=[
+                {t:r.point,b:false},
+                {t:proj.latestDate,b:false},
+                {t:cumDisp!=null?cumDisp.toFixed(2):'-',b:isBoldDisp},
+                {t:mDisp!=null?mDisp.toFixed(2):'-',b:!!(mDisp!=null&&Math.abs(mDisp)>=3)},
+                {t:rDisp!=null?rDisp.toFixed(3):'-',b:!!(rDisp!=null&&Math.abs(rDisp)>=1.0)},
+                {t:cumSettle!=null?cumSettle.toFixed(2):'-',b:isBoldSettle},
+                {t:mSettle!=null?mSettle.toFixed(2):'-',b:!!(mSettle!=null&&Math.abs(mSettle)>=3)},
+                {t:rSettle!=null?rSettle.toFixed(3):'-',b:!!(rSettle!=null&&Math.abs(rSettle)>=1.0)},
+                {t:'',b:false}
               ];
 
-              const cells=cellVals.map(cv=>{
-                const trOpts={text:cv.t,bold:false,size:16,font:'宋体'};
-                if(cv.red)trOpts.color='FF0000';
-                return new TC({borders:border,width:{size:950,type:WT.DXA},verticalAlign:'center',
-                  children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR(trOpts)]})]});
-              });
+              const cells=cellDefs.map((cd,i)=>new TC({borders:border,width:{size:tblColWidths[i],type:WT.DXA},verticalAlign:'center',
+                children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:cd.t,size:16,font:'宋体',bold:cd.b})]})]}));
               allRows.push(new TableRow({children:cells}));
             });
 
-            const tableTitle='表'+chNum+'.'+subIdx+'-1  '+proj.name+'监测成果（共'+records.length+'个测点）';
+            // Table title
+            const tableTitle='表'+sectionNum+'-1  '+proj.name+'监测成果表（共'+records.length+'个测点）';
             docChildren.push(new Paragraph({spacing:{before:200,after:100},children:[new TextRun({text:tableTitle,size:20,font:'宋体',bold:true,italics:true})]}));
             docChildren.push(new Table({rows:allRows,width:{size:100,type:WT.PERCENTAGE}}));
 
-            if(records.length>50){
-              docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{before:60},children:[new TextRun({text:'...共'+records.length+'条记录，仅展示前50条',size:18,font:'宋体',color:'999999'})]}));
+            if(records.length>80){
+              docChildren.push(new Paragraph({alignment:AT.CENTER,spacing:{before:60},children:[new TextRun({text:'...共'+records.length+'条记录，仅展示前80条',size:18,font:'宋体',color:'999999'})]}));
             }
 
             // Embed trend chart
             if(chartCache[proj.id]){
-              docChildren.push(new Paragraph({spacing:{before:200,after:100},children:[new TextRun({text:'图'+chNum+'.'+subIdx+'-1  '+proj.name+'累计位移趋势图',size:20,font:'宋体',bold:true,italics:true})]}));
+              const figTitle='图'+sectionNum+'-1  '+proj.name+'累计位移变化趋势图';
+              docChildren.push(new Paragraph({spacing:{before:300,after:100},children:[new TextRun({text:figTitle,size:20,font:'宋体',bold:true,italics:true})]}));
               try{
                 const rawBase64=chartCache[proj.id].replace(/^data:image\/\w+;base64,/,'');
-                docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,children:[new ImageRun({data:rawBase64,transformation:{width:560,height:280},type:'png'})]}));
+                docChildren.push(new Paragraph({alignment:AT.CENTER,children:[new ImageRun({data:rawBase64,transformation:{width:520,height:260},type:'png'})]}));
               }catch(imgErr){
-                docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,children:[new TextRun({text:'[图表生成失败]',size:18,font:'宋体',color:'999999'})]}));
+                docChildren.push(new Paragraph({alignment:AT.CENTER,children:[new TextRun({text:'[图表生成失败]',size:18,font:'宋体',color:'999999'})]}));
               }
             }
-          }else if(anchorRecords.length>0){
-            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'截至本期，锚杆应力监测数据正常，最大应力值'+Math.max(...anchorRecords.map(r=>Math.abs(r.stress||0))).toFixed(2)+'MPa。',size:22,font:'宋体'})]}));
-          }else if(blastRecords.length>0){
-            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'爆破振动监测数据已采集，未超警戒值，处于稳定状态。',size:22,font:'宋体'})]}));
-          }else if(convergenceRecords.length>0){
-            const maxConv=Math.max(...convergenceRecords.map(r=>Math.abs(r.cumDisp||0)));
-            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'收敛监测数据已采集，最大收敛值'+maxConv.toFixed(2)+'mm，未超警戒值。',size:22,font:'宋体'})]}));
-          }else if(inclinoRecords.length>0){
-            const holes=[...new Set(inclinoRecords.map(r=>r.hole))];
-            const maxDisp=Math.max(...inclinoRecords.map(r=>Math.abs(r.cumDisp||0)));
-            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'测斜孔共'+holes.length+'个，最大累积位移'+maxDisp.toFixed(2)+'mm，未超警戒值。',size:22,font:'宋体'})]}));
           }else{
-            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'本期暂无监测数据。',size:22,font:'宋体',color:'999999'})]}));
+            // Handle non-displacement data types
+            let descText='本期暂无监测数据。';
+            if(anchorRecords.length>0){
+              const maxStress=Math.max(...anchorRecords.map(r=>Math.abs(r.stress||0)));
+              descText='截至'+proj.latestDate+'，锚杆应力监测数据正常，最大应力值为'+maxStress.toFixed(2)+'MPa。';
+            }else if(blastRecords.length>0){
+              descText='爆破振动监测数据已采集，各测点振动速度未超警戒值，处于稳定状态。';
+            }else if(convergenceRecords.length>0){
+              const maxConv=Math.max(...convergenceRecords.map(r=>Math.abs(r.cumDisp||r.length||0)));
+              descText='收敛监测数据已采集，最大收敛值'+maxConv.toFixed(2)+'mm，未超警戒值。';
+            }else if(inclinoRecords.length>0){
+              const holes=[...new Set(inclinoRecords.map(r=>r.hole))];
+              const maxDisp=Math.max(...inclinoRecords.map(r=>Math.abs(r.cumDisp||0)));
+              descText='测斜孔共'+holes.length+'个，最大累积位移'+maxDisp.toFixed(2)+'mm。';
+            }
+            docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:descText,size:22,font:'宋体'})]}));
           }
-          subIdx++;
         });
-        chNum++;
+
+        currentChNum=cfg.chNum;
         docChildren.push(new Paragraph({children:[new PageBreak()]}));
       });
 
-      // ============ CHAPTER 6: 问题与建议 ============
+      // ============ CHAPTER 6: 存在的主要问题与建议 ============
       docChildren.push(new Paragraph({spacing:{before:200,after:200},children:[new TextRun({text:'6  存在的主要问题与建议',size:30,bold:true,font:'宋体'})]}));
+
+      // Collect all alerts
       const allAlerts=[];
       Object.values(areas).forEach(a=>{a.projects.forEach(p=>{
         const keys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(p.id+'_')).sort();
@@ -1460,31 +1558,44 @@ function generateReport(){
           });
         }
       });});
+
       if(allAlerts.length>0){
         docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'本期监测发现以下预警情况需重点关注：',size:22,font:'宋体',bold:true})]}));
-        allAlerts.slice(0,15).forEach(a=>{docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:60},children:[new TextRun({text:a.proj+' '+a.point+'号测点：'+a.type+'累计'+a.val.toFixed(2)+'mm，超预警值，建议加强监测频率。',size:22,font:'宋体'})]}));});
+        allAlerts.slice(0,15).forEach(a=>{
+          docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:60},children:[new TextRun({text:a.proj+' '+a.point+'号测点：'+a.type+'累计'+a.val.toFixed(2)+'mm，超过预警值，建议加强监测频率并分析原因。',size:22,font:'宋体'})]}));
+        });
+      }else{
+        docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'本期各监测项目数据均在正常范围内，未发现异常预警情况。',size:22,font:'宋体'})]}));
       }
-      docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:'共同维护监测设施、监测基准点；建议加强现场协调保护位于仓内的监测设施，以免因孔位被破坏导致永久无法使用。部分监测点位因扬尘影响面临监测误差较大的情况且监测点位脱落，建议试点自动化监测以提升精度和效率。',size:22,font:'宋体'})]}));
+
+      docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:'建议共同维护监测设施及监测基准点，加强现场协调保护位于堆场仓内的监测设施，以免因孔位被破坏导致永久无法使用。部分监测点位因扬尘影响面临监测误差较大的情况且监测点位脱落，建议试点自动化监测以提升精度和效率。',size:22,font:'宋体'})]}));
       docChildren.push(new Paragraph({children:[new PageBreak()]}));
 
       // ============ CHAPTER 7: 下月工作计划 ============
       docChildren.push(new Paragraph({spacing:{after:200},children:[new TextRun({text:'7  下月工作计划',size:30,bold:true,font:'宋体'})]}));
-      ['对矿山破碎硐收敛、二期网架及仓内钢立柱进行周期性安全监测。','对物流廊道钢立柱及拉紧装置进行周期性安全监测。','对陆域堆场进行周期性安全监测。','对码头平台进行周期性沉降监测。','对矿山、物流廊道、陆域堆场、码头平台进行巡视检查。'].forEach((item,i)=>{
+      const planItems=[];
+      planItems.push('对矿山破碎硐室收敛、仓内钢立柱及网架基础进行周期性安全监测');
+      planItems.push('对物流廊道钢立柱、拉紧装置及廊道排架进行周期性安全监测');
+      planItems.push('对陆域堆场成品料、试验区及推广区进行周期性安全监测');
+      planItems.push('对码头平台进行周期性沉降监测');
+      planItems.push('对矿山、物流廊道、陆域堆场、码头平台等重点部位进行巡视检查');
+      planItems.push('进行监测数据整编分析，编制监测月报');
+      planItems.forEach((item,i)=>{
         docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:80},children:[new TextRun({text:'（'+(i+1)+'）'+item,size:22,font:'宋体'})]}));
       });
 
       // ============ BUILD DOCUMENT ============
       const sectionProps={page:{margin:{top:1440,bottom:1440,left:1440,right:1440},size:{width:11906,height:16838}}};
-      const doc=new Document({sections:[{properties:sectionProps,headers:{default:pageHeader},footers:{default:pageFooter},children:docChildren}]});
+      const doc=new Document({sections:[{properties:sectionProps,footers:{default:pageFooter},children:docChildren}]});
 
       Packer.toBlob(doc).then(blob=>{
         const url=URL.createObjectURL(blob);
         const a=document.createElement('a');
         a.href=url;
-        a.download='长九灰岩矿项目监测数据处理系统_月报_'+year+'年'+month+'月（总第73期）.docx';
+        a.download='长九（神山）灰岩矿项目安全监测月报_'+year+'年'+month+'月（总第73期）.docx';
         a.click();
         URL.revokeObjectURL(url);
-        toast('多子项目合并月报已生成！共'+totalProjects+'个子项目、7章完整结构','success');
+        toast('月报已生成！格式对齐第57期模板，共'+totalProjects+'个子项目、7章完整结构','success');
       });
     }catch(e){
       console.error(e);
@@ -1492,7 +1603,6 @@ function generateReport(){
     }
   })();
 }
-
 // ==================== SHARE SELECT ====================
 function populateShareSelect(){const container=$('shareProjects');container.innerHTML=(appData.projects||[]).map(p=>'<label><input type="checkbox" value="'+p.id+'">['+p.group+'] '+p.name+'</label>').join('');}
 
