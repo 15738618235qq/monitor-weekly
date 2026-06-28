@@ -535,6 +535,8 @@ function logoutUser(){
 // ==================== APP INIT ====================
 function initApp(){
   initSupabase();
+  // Bind sidebar click events (deferred to ensure DOM ready, fixes panel switching)
+  document.querySelectorAll('.sidebar-item').forEach(item=>{item.addEventListener('click',function(){const p=this.dataset.panel;if(p)switchPanel(p);});});
   try{var pq=JSON.parse(localStorage.getItem(PENDING_SYNC_KEY)||'[]');pendingSyncQueue=pq;}catch(e){pendingSyncQueue=[];}
 
   try{
@@ -842,7 +844,19 @@ function showImportHint(){
     'H':'<strong>格式H - 测斜矩阵：</strong>Excel格式，第1列深度(m)，后续列为各日期累计变化量(mm)<br>表头示例：深度（m）| 2026-05-19 | 2026-05-26 | ...<br>自动解析为深度×时间矩阵，不参考基线，各期独立对比',
     'I':'<strong>格式I - 收敛测线：</strong>每行2列：测点对（如A-B） 实测距离(mm)<br>首次测量值为基准，后续各期与基准对比计算累计变化量'
   };
+  const placeholders={
+    'A':'点名 A B C D E F → 点名 X初始 Y初始 Z初始 X当前 Y当前 Z当前',
+    'B':'点名 H初始 H当前 → 点名 H初始(mm) H当前(mm)',
+    'C':'孔号 深度(m) 累计位移(mm) → 支持同一孔号多行不同深度',
+    'D':'点名 应力值(MPa) 状态 → 状态留空自动判断(tensile/compressive)',
+    'E':'点名 水位高程(m)',
+    'F':'点名 X速度(cm/s) Y速度 Z速度 X频率(Hz) Y频率 Z频率',
+    'G':'点名 测线长度(mm)',
+    'H':'请上传Excel文件（.xlsx/.xls），或粘贴矩阵数据（Tab分隔）',
+    'I':'测点对 实测距离(mm) → 如 A-B 1234.56'
+  };
   $('importHint').innerHTML=hints[fmt]||'';
+  $('importData').placeholder=placeholders[fmt]||'';
   onFormatChange();
 }
 
@@ -1466,7 +1480,7 @@ function generateReport(){
   const totalProjects=Object.values(areas).reduce((s,a)=>s+a.projects.length,0);
   const totalRecords=Object.values(areas).reduce((s,a)=>s+a.projects.reduce((ss,p)=>ss+p.dataKeys.length,0),0);
 
-  if(totalProjects===0){toast('所选子项目无监测数据，请先导入数据','error');return;}
+  if(totalProjects===0||totalRecords===0){toast('所选子项目暂无监测数据，请先导入数据','error');return;}
 
   toast('正在收集数据并预生成趋势图表...','info');
   addOperationLog('报告生成','多子项目合并'+reportTypeLabel+' → 共'+totalProjects+'个子项目,'+totalRecords+'条记录');
