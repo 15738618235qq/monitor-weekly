@@ -415,10 +415,9 @@ const DEFAULT_THRESHOLDS={
 };
 
 const COLORS28=[
-  '#1a73e8','#e37400','#137333','#c5221f','#7b1fa2','#00695c','#bf360c','#283593',
-  '#2e7d32','#f57f17','#4a148c','#004d40','#b71c1c','#1a237e','#33691e','#e65100',
-  '#311b92','#006064','#880e4f','#0d47a1','#558b2f','#ff6f00','#4527a0','#01579b',
-  '#827717','#dd2c00','#1b5e20','#6a1b9a'
+  '#1F4E79','#8B2252','#6B8E23','#3A7D8C','#4A3872','#B87A3F','#4A7EB0','#993333',
+  '#A8C673','#7A6BC0','#408080','#E8A735','#4DA8B5','#5A92C1','#D4A0A0','#AEBC34',
+  '#5AB8E0','#E89A2A','#B0C4DE','#D6A0A0','#B8D0A8','#C0B8D0','#A8D8E8'
 ];
 
 const AREA_COLORS={矿山:'#1a73e8','物流廊道':'#e37400','陆域堆场':'#7b1fa2',码头:'#137333'};
@@ -1003,7 +1002,7 @@ function buildTrendData(pjId){
 }
 function buildTrendDatasets(allDates,pointValuesMap){
   const pointList=Object.keys(pointValuesMap).sort(),datasets=[];
-  pointList.forEach((point,idx)=>{const color=COLORS28[idx%COLORS28.length],data=allDates.map(date=>pointValuesMap[point][date]??null);datasets.push({label:point,data,borderColor:color,backgroundColor:color,borderWidth:2,pointRadius:4,pointHoverRadius:6,tension:0,fill:false,spanGaps:false});});
+  pointList.forEach((point,idx)=>{const color=COLORS28[idx%COLORS28.length],data=allDates.map(date=>pointValuesMap[point][date]??null);datasets.push({label:point,data,borderColor:color,backgroundColor:color,borderWidth:1.5,pointRadius:0,pointHoverRadius:4,tension:0,fill:false,spanGaps:false});});
   return datasets;
 }
 function renderTrendChart(){
@@ -1228,7 +1227,7 @@ async function generateTrendChart(pjId,projName,width,height){
   const datasets=displayPoints.map((point,idx)=>{
     const color=COLORS28[idx%COLORS28.length];
     const data=allDates.map(date=>pointValuesMap[point][date]??null);
-    return {label:point,data,borderColor:color,backgroundColor:color,borderWidth:2,pointRadius:3,pointHoverRadius:5,tension:0,fill:false,spanGaps:false};
+    return {label:point,data,borderColor:color,backgroundColor:color,borderWidth:1.5,pointRadius:0,pointHoverRadius:4,tension:0,fill:false,spanGaps:false};
   });
 
   const container=document.createElement('div');
