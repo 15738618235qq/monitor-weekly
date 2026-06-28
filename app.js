@@ -375,19 +375,16 @@ const DEFAULT_PROJECTS=[
   {id:'p18',name:'物流廊道-金磊长胶搭接处',area:'物流廊道',desc:'zs/zx/ys/yx/yb/zb系列20个点位，含立柱+边坡测点',group:'物流廊道'},
   {id:'p19',name:'物流廊道-马料湖段钢立柱',area:'物流廊道',desc:'W1-W15共15个测点，位移+沉降',group:'物流廊道'},
   // 陆域堆场-成品料堆场
-  {id:'p20',name:'成品料堆载高度',area:'陆域堆场-成品料',desc:'大石仓/小石仓/砂仓/中石仓4仓，限高18m',group:'陆域堆场'},
   {id:'p21',name:'成品料网架基础A轴',area:'陆域堆场-成品料',desc:'A02-A86共31个点位，多阶段累计位移(限高15m/16m/17.5m/18m)',group:'陆域堆场'},
   {id:'p22',name:'成品料网架基础B轴',area:'陆域堆场-成品料',desc:'B2-B83共29个点位，多阶段累计位移',group:'陆域堆场'},
   {id:'p23',name:'成品料地基土体水平位移',area:'陆域堆场-成品料',desc:'IN1-C1~IN11-C4共11个测斜孔，累计最大位移+深度+速率',group:'陆域堆场'},
   {id:'p24',name:'成品料仓地弄沉降',area:'陆域堆场-成品料',desc:'D1-1~D4-16共64个点，按大石仓/小石仓/砂仓/中石仓分区',group:'陆域堆场'},
   // 陆域堆场-混合料试验区
-  {id:'p25',name:'试验区堆载高度',area:'陆域堆场-试验区',desc:'限高19m',group:'陆域堆场'},
   {id:'p26',name:'试验区网架基础A轴',area:'陆域堆场-试验区',desc:'A50-A59共10个点位，7阶段累计位移(高压旋喷~限高19m)',group:'陆域堆场'},
   {id:'p27',name:'试验区网架基础B轴',area:'陆域堆场-试验区',desc:'B50-B59共10个点位',group:'陆域堆场'},
   {id:'p28',name:'试验区地表沉降(T1-T13)',area:'陆域堆场-试验区',desc:'13个沉降标(部分掩埋)，两次堆载试验沉降量+累计+速率',group:'陆域堆场'},
   {id:'p29',name:'试验区地基水平位移(测斜)',area:'陆域堆场-试验区',desc:'I1/I2/I9/I10/I11/I15/I16/I18共8个孔',group:'陆域堆场'},
   // 陆域堆场-推广区
-  {id:'p30',name:'推广区堆载高度',area:'陆域堆场-推广区',desc:'限高17m',group:'陆域堆场'},
   {id:'p31',name:'推广区网架基础A轴',area:'陆域堆场-推广区',desc:'A3-A49共30个点位，3阶段累计位移(限高15m/16.5m/17m)',group:'陆域堆场'},
   {id:'p32',name:'推广区网架基础B轴',area:'陆域堆场-推广区',desc:'B3-B48共15个点位',group:'陆域堆场'},
   // 码头平台
@@ -406,7 +403,6 @@ const DEFAULT_APP_DATA={
   anchorStress:{},
   blastVibration:{},
   convergence:{},
-  stackingHeight:{},
   waterLevel:{},
   staticLevel:{},
   tunnelSettlement:{}
@@ -544,7 +540,7 @@ function initApp(){
     const raw=localStorage.getItem(APP_KEY);
     if(raw){
       appData=JSON.parse(raw);
-      const defaults=['anchorStress','blastVibration','convergence','stackingHeight','waterLevel','staticLevel','tunnelSettlement','baselineTypes'];
+      const defaults=['anchorStress','blastVibration','convergence','waterLevel','staticLevel','tunnelSettlement','baselineTypes'];
       defaults.forEach(k=>{if(!(k in appData))appData[k]={};});
       if(!appData.thresholds)appData.thresholds=DEFAULT_THRESHOLDS;
       // Ensure projects match current full list
@@ -558,7 +554,7 @@ function initApp(){
       appData.baselineTypes={};
       appData.thresholds=JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
       appData.anchorStress={};appData.blastVibration={};appData.convergence={};
-      appData.stackingHeight={};appData.waterLevel={};appData.staticLevel={};appData.tunnelSettlement={};
+      appData.waterLevel={};appData.staticLevel={};appData.tunnelSettlement={};
       saveData(appData);
     }
   }catch(e){
@@ -567,7 +563,7 @@ function initApp(){
     appData.baselines={};appData.baselineTypes={};
     appData.thresholds=JSON.parse(JSON.stringify(DEFAULT_THRESHOLDS));
     appData.anchorStress={};appData.blastVibration={};appData.convergence={};
-    appData.stackingHeight={};appData.waterLevel={};appData.staticLevel={};appData.tunnelSettlement={};
+    appData.waterLevel={};appData.staticLevel={};appData.tunnelSettlement={};
   }
   if(currentUser){
     $('sidebarUser').textContent=currentUser.name;$('accountUser').value=currentUser.name;
@@ -644,7 +640,7 @@ function generateShareCode(){
     Object.keys(appData.anchorStress||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>{shareData.data[pjId][k]=appData.anchorStress[k];});
     Object.keys(appData.blastVibration||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>{shareData.data[pjId][k]=appData.blastVibration[k];});
     Object.keys(appData.convergence||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>{shareData.data[pjId][k]=appData.convergence[k];});
-    Object.keys(appData.stackingHeight||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>{shareData.data[pjId][k]=appData.stackingHeight[k];});
+
   });
   const code=btoa(unescape(encodeURIComponent(JSON.stringify(shareData))));
   $('shareCodeBox').style.display='block';$('shareCodeBox').textContent=code;
@@ -705,11 +701,10 @@ function renderOverview(){
   const aCount=Object.keys(appData.anchorStress||{}).length;
   const bCount=Object.keys(appData.blastVibration||{}).length;
   const cCount=Object.keys(appData.convergence||{}).length;
-  const sCount=Object.keys(appData.stackingHeight||{}).length;
   const wCount=Object.keys(appData.waterLevel||{}).length;
   const totalProj=(appData.projects||[]).length;
   const groups=new Set((appData.projects||[]).map(p=>p.group));
-  const totalOther=aCount+bCount+cCount+sCount+wCount;
+  const totalOther=aCount+bCount+cCount+wCount;
 
   $('statGrid').innerHTML=
     '<div class="stat-card blue"><div class="value">'+totalProj+'</div><div class="label">监测子项目</div></div>'+
@@ -838,8 +833,7 @@ function showImportHint(){
     'D':'<strong>格式D：</strong>每行3列：点名 应力值(MPa) 状态<br>状态可选：拉/压，留空自动判断（正值拉、负值压）',
     'E':'<strong>格式E：</strong>每行2列：点名 水位高程(m)',
     'F':'<strong>格式F：</strong>每行7列：点名 X速度(cm/s) Y速度 Z速度 X频率(Hz) Y频率 Z频率',
-    'G':'<strong>格式G：</strong>每行2列：点名 测线长度(mm)',
-    'H':'<strong>格式H：</strong>每行2列：区域名 堆载高度(m)'
+    'G':'<strong>格式G：</strong>每行2列：点名 测线长度(mm)'
   };
   $('importHint').innerHTML=hints[fmt]||'';
   onFormatChange();
@@ -891,9 +885,8 @@ function importData(){
     else if(fmt==='E'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;records.push({point:parts[0],level:parseFloat(parts[1])});count++;});if(!appData.waterLevel)appData.waterLevel={};appData.waterLevel[key]=records;}
     else if(fmt==='F'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<7)return;records.push({point:parts[0],chX:parseFloat(parts[1]),chY:parseFloat(parts[2]),chZ:parseFloat(parts[3]),freqX:parseFloat(parts[4]),freqY:parseFloat(parts[5]),freqZ:parseFloat(parts[6])});count++;});if(!appData.blastVibration)appData.blastVibration={};appData.blastVibration[key]=records;}
     else if(fmt==='G'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;records.push({point:parts[0],length:parseFloat(parts[1])});count++;});if(!appData.convergence)appData.convergence={};appData.convergence[key]=records;}
-    else if(fmt==='H'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;records.push({area:parts[0],height:parseFloat(parts[1])});count++;});if(!appData.stackingHeight)appData.stackingHeight={};appData.stackingHeight[key]=records;}
     saveData(appData);
-    const typeNames={D:'锚杆应力',E:'地下水位',F:'爆破振动',G:'收敛监测',H:'堆载高度',A:'位移+沉降',B:'沉降',C:'测斜'};
+    const typeNames={D:'锚杆应力',E:'地下水位',F:'爆破振动',G:'收敛监测',A:'位移+沉降',B:'沉降',C:'测斜'};
     toast('成功导入 '+count+' 条'+((typeNames[fmt])||'')+'数据','success');
     addOperationLog('数据导入','格式'+fmt+' '+count+'条 → '+pjId+(fmt==='A'?' ('+($('importCalcMode').value==='chainage'?'桩号法':'偏距法')+')':''));
     renderImportPreview(records,fmt);
@@ -908,7 +901,6 @@ function renderImportPreview(records,fmt){
   else if(fmt==='E')cols=['点名','水位(m)'];
   else if(fmt==='F')cols=['点名','CH_X(cm/s)','CH_Y','CH_Z','Freq_X','Freq_Y','Freq_Z'];
   else if(fmt==='G')cols=['点名','测线长度(mm)'];
-  else if(fmt==='H')cols=['区域','堆高(m)'];
   else cols=['点名','深度(m)','位移(mm)'];
   html='<table><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';
   sample.forEach(r=>{
@@ -918,7 +910,6 @@ function renderImportPreview(records,fmt){
     else if(fmt==='E')html+='<td>'+r.point+'</td><td>'+r.level+'</td>';
     else if(fmt==='F')html+='<td>'+r.point+'</td><td>'+r.chX+'</td><td>'+r.chY+'</td><td>'+r.chZ+'</td><td>'+r.freqX+'</td><td>'+r.freqY+'</td><td>'+r.freqZ+'</td>';
     else if(fmt==='G')html+='<td>'+r.point+'</td><td>'+r.length+'</td>';
-    else if(fmt==='H')html+='<td>'+r.area+'</td><td>'+r.height+'</td>';
     else html+='<td>'+r.hole+'</td><td>'+r.depth+'</td><td>'+r.cumDisp+'</td>';
     html+='</tr>';
   });
@@ -1087,7 +1078,7 @@ function toggleReportType(){const type=$('reportType').value;$('reportHint').inn
 // Helper: get all measurement keys for a project, sorted by date
 function getProjectDataKeys(pjId){
   const allKeys=[];
-  ['measurements','anchorStress','blastVibration','convergence','stackingHeight','waterLevel','inclinometerData'].forEach(store=>{
+  ['measurements','anchorStress','blastVibration','convergence','waterLevel','inclinometerData'].forEach(store=>{
     const obj=appData[store]||{};
     Object.keys(obj).filter(k=>k.startsWith(pjId+'_')).forEach(k=>allKeys.push({key:k,date:k.replace(pjId+'_',''),store}));
   });
@@ -1251,7 +1242,7 @@ async function generateTrendChart(pjId,projName,width,height){
     const chart=new Chart(canvas.getContext('2d'),{
       type:'line',data:{labels:allDates,datasets},
       options:{responsive:false,animation:false,devicePixelRatio:2,
-        plugins:{title:{display:true,text:projName+' 位移趋势图',font:{size:14},padding:10},legend:{position:'bottom',labels:{boxWidth:10,font:{size:8},padding:3}}},
+        plugins:{title:{display:true,text:projName+' 位移趋势图',font:{size:14},padding:10},legend:{position:'top',labels:{boxWidth:10,font:{size:8},padding:3}}},
         scales:{x:{title:{display:true,text:'日期',font:{size:10}},grid:{display:true,color:'rgba(0,0,0,0.06)'},ticks:{font:{size:8},maxRotation:45,maxTicksLimit:20}},
           y:{title:{display:true,text:'累计位移量(mm)',font:{size:10}},grid:{color:'rgba(0,0,0,0.06)'}}}
       }
@@ -1269,13 +1260,14 @@ function generateReport(){
   if(selectedIds.length===0){toast('请至少选择一个子项目','error');return;}
 
   const type=$('reportType').value,date=$('reportDate').value;
-  if(type!=='monthly'){toast('周报模式：请先切换到月报模式以生成对标第57期格式的完整月报','info');return;}
+  if(!type){toast('请选择报告类型','error');return;}
   const reportDate=date||formatDate(new Date());
   const reportDateObj=new Date(reportDate);
   const year=reportDateObj.getFullYear(),month=reportDateObj.getMonth()+1;
   const chineseNums=['零','一','二','三','四','五','六','七','八','九','十','十一','十二'];
   const yearChinese=String(year).split('').map(c=>chineseNums[parseInt(c)]).join('');
   const monthChinese=chineseNums[month];
+  const reportTypeLabel=type==='weekly'?'周报':'月报';
   const th=appData.thresholds||DEFAULT_THRESHOLDS;
   const areas=getReportDataByArea(selectedIds);
   const totalProjects=Object.values(areas).reduce((s,a)=>s+a.projects.length,0);
@@ -1284,12 +1276,12 @@ function generateReport(){
   if(totalProjects===0){toast('所选子项目无监测数据，请先导入数据','error');return;}
 
   toast('正在收集数据并预生成趋势图表...','info');
-  addOperationLog('报告生成','多子项目合并月报 → 共'+totalProjects+'个子项目,'+totalRecords+'条记录');
+  addOperationLog('报告生成','多子项目合并'+reportTypeLabel+' → 共'+totalProjects+'个子项目,'+totalRecords+'条记录');
 
   // Count total periods per project
   function getPeriodCount(pjId){
     const allDates=new Set();
-    ['measurements','anchorStress','blastVibration','convergence','stackingHeight','waterLevel','inclinometerData'].forEach(store=>{
+    ['measurements','anchorStress','blastVibration','convergence','waterLevel','inclinometerData'].forEach(store=>{
       Object.keys(appData[store]||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>allDates.add(k.replace(pjId+'_','')));
     });
     return allDates.size;
@@ -1325,7 +1317,7 @@ function generateReport(){
       // Contract number
       docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:400},children:[new TextRun({text:'（合同编号：CJ2023/01）',size:20,font:'宋体',color:'666666'})]}));
       // Main title with character spacing
-      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:400},children:[new TextRun({text:'监  测  月  报',size:52,bold:true,font:'宋体'})]}));
+      docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:400},children:[new TextRun({text:'监  测  '+(type==='weekly'?'周':'月')+'  报',size:52,bold:true,font:'宋体'})]}));
       // Period
       docChildren.push(new Paragraph({alignment:AlignmentType.CENTER,spacing:{after:1200},children:[new TextRun({text:year+'年'+month+'月（总第73期）',size:30,bold:true,font:'宋体'})]}));
       // Reviewers
@@ -1379,7 +1371,7 @@ function generateReport(){
       });
 
       // 1.3 工作完成情况统计表
-      docChildren.push(new Paragraph({spacing:{before:300,after:150},children:[new TextRun({text:'表1-1  本月工作完成情况统计',size:20,font:'宋体',bold:true,italics:true})]}));
+      docChildren.push(new Paragraph({spacing:{before:300,after:150},children:[new TextRun({text:'表1-1  本月工作完成情况统计',size:20,font:'宋体',bold:true})]}));
 
       // Build stat table
       const statHeaders=['序号','监测项目','监测内容','单位','仪器数量','观测频次','本月观测次数','备注'];
@@ -1525,7 +1517,7 @@ function generateReport(){
 
             // Table title
             const tableTitle='表'+sectionNum+'-1  '+proj.name+'监测成果表（共'+tableRecords.length+'个测点）';
-            docChildren.push(new Paragraph({spacing:{before:200,after:100},children:[new TextRun({text:tableTitle,size:20,font:'宋体',bold:true,italics:true})]}));
+            docChildren.push(new Paragraph({spacing:{before:200,after:100},children:[new TextRun({text:tableTitle,size:20,font:'宋体',bold:true})]}));
             docChildren.push(new Table({rows:allRows,width:{size:100,type:WT.PERCENTAGE}}));
 
             if(records.length>80){
@@ -1535,7 +1527,7 @@ function generateReport(){
             // Embed trend chart
             if(chartCache[proj.id]){
               const figTitle='图'+sectionNum+'-1  '+proj.name+'累计位移变化趋势图';
-              docChildren.push(new Paragraph({spacing:{before:300,after:100},children:[new TextRun({text:figTitle,size:20,font:'宋体',bold:true,italics:true})]}));
+              docChildren.push(new Paragraph({spacing:{before:300,after:100},children:[new TextRun({text:figTitle,size:20,font:'宋体',bold:true})]}));
               try{
                 const rawBase64=chartCache[proj.id].replace(/^data:image\/\w+;base64,/,'');
                 docChildren.push(new Paragraph({alignment:AT.CENTER,children:[new ImageRun({data:rawBase64,transformation:{width:520,height:260},type:'png'})]}));
@@ -1616,10 +1608,10 @@ function generateReport(){
         const url=URL.createObjectURL(blob);
         const a=document.createElement('a');
         a.href=url;
-        a.download='长九（神山）灰岩矿项目安全监测月报_'+year+'年'+month+'月（总第73期）.docx';
+        a.download='长九（神山）灰岩矿项目安全监测'+reportTypeLabel+'_'+year+'年'+month+'月（总第73期）.docx';
         a.click();
         URL.revokeObjectURL(url);
-        toast('月报已生成！格式对齐第57期模板，共'+totalProjects+'个子项目、7章完整结构','success');
+        toast(reportTypeLabel+'已生成！格式对齐第57期模板，共'+totalProjects+'个子项目、7章完整结构','success');
       });
     }catch(e){
       console.error(e);
@@ -1635,7 +1627,7 @@ function exportAllData(){const json=JSON.stringify(appData,null,2);const blob=ne
 function handleRestoreFile(){
   const file=$('restoreFile').files[0];if(!file)return;if(!confirm('恢复数据将覆盖当前所有数据，确定继续？建议先导出备份。'))return;
   const reader=new FileReader();
-  reader.onload=function(e){try{const data=JSON.parse(e.target.result);appData=data;const defaults=['anchorStress','blastVibration','convergence','stackingHeight','waterLevel','staticLevel','tunnelSettlement','baselineTypes'];defaults.forEach(k=>{if(!(k in appData))appData[k]={};});saveData(appData);renderOverview();populateAllSelects();toast('数据恢复成功','success');addOperationLog('备份','从文件恢复数据');}catch(err){toast('JSON解析失败: '+err.message,'error');}};reader.readAsText(file);
+  reader.onload=function(e){try{const data=JSON.parse(e.target.result);appData=data;const defaults=['anchorStress','blastVibration','convergence','waterLevel','staticLevel','tunnelSettlement','baselineTypes'];defaults.forEach(k=>{if(!(k in appData))appData[k]={};});saveData(appData);renderOverview();populateAllSelects();toast('数据恢复成功','success');addOperationLog('备份','从文件恢复数据');}catch(err){toast('JSON解析失败: '+err.message,'error');}};reader.readAsText(file);
 }
 function showImportAllModal(){document.getElementById('restoreFile').click();}
 
