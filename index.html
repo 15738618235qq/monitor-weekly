@@ -404,6 +404,8 @@ textarea{resize:vertical;min-height:60px}
 <option value="E">格式E - 地下水位 (点名,水位m)</option>
 <option value="F">格式F - 爆破振动 (点名,X-Y-Z速度,频率)</option>
 <option value="G">格式G - 收敛监测 (点名,测线长度mm)</option>
+<option value="H">格式H - 测斜矩阵 (深度×时间矩阵, 无基线)</option>
+<option value="I">格式I - 收敛测线 (测点对, 日期, 距离)</option>
 </select></div>
 <div id="importCalcModeRow" class="form-row" style="display:none">
 <div class="form-group"><label>计算方式</label><select id="importCalcMode">
@@ -459,6 +461,19 @@ textarea{resize:vertical;min-height:60px}
 <div class="card" style="margin-top:20px"><div class="card-title"><span class="icon" style="background:var(--warning)">&#9654;</span> 测斜管深度-位移剖面图</div>
 <div class="form-row"><div class="form-group"><label>选择测斜管</label><select id="inclinoHole" onchange="renderInclinoChart()"></select></div></div>
 <div class="chart-container"><canvas id="inclinoCanvas"></canvas></div></div>
+
+<!-- INCLINO MATRIX (测斜矩阵) -->
+<div class="card" style="margin-top:20px" id="inclinoMatrixSection">
+<div class="card-title"><span class="icon" style="background:#8B2252">&#9632;</span> 测斜 深度&times;时间矩阵</div>
+<div class="chart-container" style="margin-bottom:16px"><canvas id="inclinoMatrixCanvas"></canvas></div>
+<div class="table-container"><table id="inclinoMatrixTable"></table></div>
+</div>
+
+<!-- CONVERGENCE (收敛监测) -->
+<div class="card" style="margin-top:20px" id="convSection">
+<div class="card-title"><span class="icon" style="background:#6B8E23">&#9679;</span> 收敛监测成果</div>
+<div id="convTable"></div>
+</div>
 <div class="card" style="margin-top:20px"><div class="card-title"><span class="icon">&#9650;</span> 累计位移趋势图</div>
 <div class="form-row"><div class="form-group"><label>子项目</label><select id="trendProject" onchange="renderTrendChart()"></select></div></div>
 <div class="trend-chart-container"><canvas id="trendCanvas"></canvas></div></div>

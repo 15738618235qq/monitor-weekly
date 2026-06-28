@@ -395,6 +395,8 @@ const DEFAULT_APP_DATA={
   projects:DEFAULT_PROJECTS,
   measurements:{},
   inclinometerData:{},
+  incData:{},        // 测斜监测（深度×时间矩阵）
+  convData:{},       // 收敛监测（两点距离对比）
   historyCumData:{},
   stages:{},
   baselines:{},
@@ -727,12 +729,16 @@ function renderOverview(){
       const aKeys=Object.keys(appData.anchorStress||{}).filter(k=>k.startsWith(p.id+'_'));
       const bKeys=Object.keys(appData.blastVibration||{}).filter(k=>k.startsWith(p.id+'_'));
       const iKeys=Object.keys(appData.inclinometerData||{}).filter(k=>k.startsWith(p.id+'_'));
+      const incKeys=appData.incData&&appData.incData[p.id]?[p.id]:[];
+      const convKeys=appData.convData&&appData.convData[p.id]?[p.id]:[];
       let tagHTML='<span class="tag">'+p.area+'</span>';
       if(mKeys.length>0)tagHTML+='<span class="tag success">位移'+mKeys.length+'期</span>';
       if(aKeys.length>0)tagHTML+='<span class="tag purple">锚杆应力'+aKeys.length+'期</span>';
       if(bKeys.length>0)tagHTML+='<span class="tag warn">爆破'+bKeys.length+'期</span>';
       if(iKeys.length>0)tagHTML+='<span class="tag cyan">测斜'+iKeys.length+'期</span>';
-      if(mKeys.length===0&&aKeys.length===0&&bKeys.length===0&&iKeys.length===0)tagHTML+='<span class="tag neutral">暂无数据</span>';
+      if(incKeys.length>0)tagHTML+='<span class="tag" style="background:#8B2252;color:#fff">测斜矩阵</span>';
+      if(convKeys.length>0)tagHTML+='<span class="tag" style="background:#6B8E23;color:#fff">收敛</span>';
+      if(mKeys.length===0&&aKeys.length===0&&bKeys.length===0&&iKeys.length===0&&incKeys.length===0&&convKeys.length===0)tagHTML+='<span class="tag neutral">暂无数据</span>';
       projHTML+='<div class="project-card"><h4>'+p.name+'</h4><div class="tags">'+tagHTML+'</div><div class="meta">'+p.desc+'</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="switchPanel(\'process\');$(\'processProject\').value=\''+p.id+'\';renderProcess();">查看数据</button><button class="btn btn-sm btn-outline" style="margin-left:4px" onclick="switchPanel(\'import\');$(\'importProject\').value=\''+p.id+'\';onFormatChange();">导入数据</button></div></div>';
     });
     projHTML+='</div>';
@@ -832,14 +838,22 @@ function showImportHint(){
     'D':'<strong>格式D：</strong>每行3列：点名 应力值(MPa) 状态<br>状态可选：拉/压，留空自动判断（正值拉、负值压）',
     'E':'<strong>格式E：</strong>每行2列：点名 水位高程(m)',
     'F':'<strong>格式F：</strong>每行7列：点名 X速度(cm/s) Y速度 Z速度 X频率(Hz) Y频率 Z频率',
-    'G':'<strong>格式G：</strong>每行2列：点名 测线长度(mm)'
+    'G':'<strong>格式G：</strong>每行2列：点名 测线长度(mm)',
+    'H':'<strong>格式H - 测斜矩阵：</strong>Excel格式，第1列深度(m)，后续列为各日期累计变化量(mm)<br>表头示例：深度（m）| 2026-05-19 | 2026-05-26 | ...<br>自动解析为深度×时间矩阵，不参考基线，各期独立对比',
+    'I':'<strong>格式I - 收敛测线：</strong>每行2列：测点对（如A-B） 实测距离(mm)<br>首次测量值为基准，后续各期与基准对比计算累计变化量'
   };
   $('importHint').innerHTML=hints[fmt]||'';
   onFormatChange();
 }
 
 function importData(){
-  const pjId=$('importProject').value,date=$('importDate').value,fmt=$('importFormat').value,raw=$('importData').value.trim(),isCum=$('importCumulative').checked;
+  const pjId=$('importProject').value,date=$('importDate').value,fmt=$('importFormat').value;
+  // For format H from Excel, use matrixData from dataset
+  var raw;
+  if(fmt==='H'){
+    var mData=$('importData').dataset.matrixData;
+    if(mData){raw=mData;}else{raw=$('importData').value.trim();}
+  }else{raw=$('importData').value.trim();}
   if(!pjId||!date||!raw){toast('请填写完整信息','error');return;}
   const lines=raw.split('\n').filter(l=>l.trim()),key=pjId+'_'+date;
   let records=[],count=0;
@@ -884,8 +898,60 @@ function importData(){
     else if(fmt==='E'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;records.push({point:parts[0],level:parseFloat(parts[1])});count++;});if(!appData.waterLevel)appData.waterLevel={};appData.waterLevel[key]=records;}
     else if(fmt==='F'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<7)return;records.push({point:parts[0],chX:parseFloat(parts[1]),chY:parseFloat(parts[2]),chZ:parseFloat(parts[3]),freqX:parseFloat(parts[4]),freqY:parseFloat(parts[5]),freqZ:parseFloat(parts[6])});count++;});if(!appData.blastVibration)appData.blastVibration={};appData.blastVibration[key]=records;}
     else if(fmt==='G'){lines.forEach(line=>{const parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;records.push({point:parts[0],length:parseFloat(parts[1])});count++;});if(!appData.convergence)appData.convergence={};appData.convergence[key]=records;}
+    else if(fmt==='H'){
+      if(raw.startsWith('{') || raw.startsWith('[')){
+        var matrixData=JSON.parse(raw);
+        if(!appData.incData)appData.incData={};
+        if(!appData.incData[pjId])appData.incData[pjId]=[];
+        var dates=matrixData.dates||[];
+        (matrixData.rows||[]).forEach(function(row){
+          var depth=parseFloat(row.depth);
+          var dateObj={};
+          (row.values||[]).forEach(function(v,i){
+            if(i<dates.length)dateObj[dates[i]]=parseFloat(v);
+          });
+          appData.incData[pjId].push({depth:depth,dates:dateObj});
+          count++;
+        });
+        // Build preview records
+        records=appData.incData[pjId].map(function(d){return {depth:d.depth,dates:d.dates};});
+      }else{
+        var dateHeader=lines[0];lines=lines.slice(1);
+        var dateCols=dateHeader.trim().split(/[\t ]+/).slice(1);
+        if(!appData.incData)appData.incData={};
+        if(!appData.incData[pjId])appData.incData[pjId]=[];
+        var previewRecords=[];
+        lines.forEach(function(line){
+          var parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;
+          var depth=parseFloat(parts[0]);
+          var dateObj={};
+          for(var i=1;i<parts.length&&(i-1)<dateCols.length;i++){
+            dateObj[dateCols[i-1]]=parseFloat(parts[i]);
+          }
+          appData.incData[pjId].push({depth:depth,dates:dateObj});
+          previewRecords.push({depth:depth,dates:dateObj});
+          count++;
+        });
+        records=previewRecords;
+      }
+    }
+    else if(fmt==='I'){
+      var convPreview=[];
+      lines.forEach(function(line){
+        var parts=line.trim().split(/[\t ]+/);if(parts.length<2)return;
+        var pointPair=parts[0],distance=parseFloat(parts[1]);
+        if(!appData.convData)appData.convData={};
+        if(!appData.convData[pjId])appData.convData[pjId]=[];
+        var existing=appData.convData[pjId].find(function(x){return x.pointPair===pointPair;});
+        if(existing){existing.records.push({date:date,distance:distance});}
+        else{var entry={pointPair:pointPair,records:[{date:date,distance:distance}]};appData.convData[pjId].push(entry);existing=entry;}
+        convPreview.push(existing);
+        count++;
+      });
+      records=convPreview;
+    }
     saveData(appData);
-    const typeNames={D:'锚杆应力',E:'地下水位',F:'爆破振动',G:'收敛监测',A:'位移+沉降',B:'沉降',C:'测斜'};
+    const typeNames={D:'锚杆应力',E:'地下水位',F:'爆破振动',G:'收敛监测',H:'测斜矩阵',I:'收敛测线',A:'位移+沉降',B:'沉降',C:'测斜'};
     toast('成功导入 '+count+' 条'+((typeNames[fmt])||'')+'数据','success');
     addOperationLog('数据导入','格式'+fmt+' '+count+'条 → '+pjId+(fmt==='A'?' ('+($('importCalcMode').value==='chainage'?'桩号法':'偏距法')+')':''));
     renderImportPreview(records,fmt);
@@ -900,6 +966,32 @@ function renderImportPreview(records,fmt){
   else if(fmt==='E')cols=['点名','水位(m)'];
   else if(fmt==='F')cols=['点名','CH_X(cm/s)','CH_Y','CH_Z','Freq_X','Freq_Y','Freq_Z'];
   else if(fmt==='G')cols=['点名','测线长度(mm)'];
+  else if(fmt==='H'){
+    var sample0=sample[0];var dateKeys=sample0&&sample0.dates?Object.keys(sample0.dates).sort():[];
+    cols=['深度(m)'].concat(dateKeys);
+    html='<table><thead><tr>'+cols.map(function(c){return '<th>'+c+'</th>';}).join('')+'</tr></thead><tbody>';
+    sample.forEach(function(r){
+      html+='<tr><td>'+r.depth+'</td>';
+      dateKeys.forEach(function(d){html+='<td>'+(r.dates&&r.dates[d]!=null?r.dates[d].toFixed(2):'-')+'</td>';});
+      html+='</tr>';
+    });
+    html+='</tbody></table>';
+    if(records.length>20)html+='<div style="padding:8px;color:#999;text-align:center">...共 '+records.length+' 条，仅显示前20条</div>';
+    $('importPreview').innerHTML=html;return;
+  }
+  else if(fmt==='I'){
+    cols=['测点对','最近距离(mm)','累计变化(mm)'];
+    html='<table><thead><tr>'+cols.map(function(c){return '<th>'+c+'</th>';}).join('')+'</tr></thead><tbody>';
+    sample.forEach(function(r){
+      var recs=r.records||[];if(recs.length===0)return;
+      var firstDist=recs[0].distance,lastDist=recs[recs.length-1].distance;
+      var cumChange=(firstDist!=null&&lastDist!=null)?(lastDist-firstDist).toFixed(2):'-';
+      html+='<tr><td>'+r.pointPair+'</td><td>'+lastDist+'</td><td>'+cumChange+'</td></tr>';
+    });
+    html+='</tbody></table>';
+    if(records.length>20)html+='<div style="padding:8px;color:#999;text-align:center">...共 '+records.length+' 条，仅显示前20条</div>';
+    $('importPreview').innerHTML=html;return;
+  }
   else cols=['点名','深度(m)','位移(mm)'];
   html='<table><thead><tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr></thead><tbody>';
   sample.forEach(r=>{
@@ -921,7 +1013,31 @@ function handleExcelImport(){
   const file=$('excelFile').files[0];if(!file)return;
   const reader=new FileReader();
   reader.onload=function(e){
-    try{const wb=XLSX.read(e.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const data=XLSX.utils.sheet_to_json(ws,{header:1});const rows=data.filter(r=>r.length>=2).map(r=>r.join('\t'));$('importData').value=rows.join('\n');toast('已从Excel读取 '+rows.length+' 行','info');}catch(err){toast('Excel解析失败: '+err.message,'error');}
+    try{const wb=XLSX.read(e.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const data=XLSX.utils.sheet_to_json(ws,{header:1});
+    const fmt=$('importFormat').value;
+    if(fmt==='H'){
+      // 测斜矩阵：第一行为表头（深度 + 各日期列），后续行为数据
+      if(data.length<2){toast('Excel数据行不足','error');return;}
+      var headerRow=data[0]||[];
+      var dates=headerRow.slice(1); // 跳过"深度"列
+      var rows=[];
+      for(var i=1;i<data.length;i++){
+        var row=data[i];if(!row||row.length<2)continue;
+        var depth=parseFloat(row[0]);
+        if(isNaN(depth))continue;
+        var values=[];
+        for(var j=1;j<row.length&&(j-1)<dates.length;j++){
+          values.push(row[j]!=null&&row[j]!==''?parseFloat(row[j]):null);
+        }
+        if(values.length>0)rows.push({depth:depth,values:values});
+      }
+      var matrixData=JSON.stringify({dates:dates,rows:rows});
+      $('importData').value='[测斜矩阵: '+dates.length+'期 x '+rows.length+'层]';
+      $('importData').dataset.matrixData=matrixData;
+      toast('已解析测斜矩阵：'+dates.length+'个日期 x '+rows.length+'个深度层','info');
+    }else{
+      const rows=data.filter(r=>r.length>=2).map(r=>r.join('\t'));$('importData').value=rows.join('\n');toast('已从Excel读取 '+rows.length+' 行','info');
+    }}catch(err){toast('Excel解析失败: '+err.message,'error');}
   };reader.readAsArrayBuffer(file);
 }
 
@@ -974,6 +1090,7 @@ function renderProcess(){
   dispHTML+='</tbody></table>';$('dispTable').innerHTML=dispHTML;$('settleTable').innerHTML=settleHTML;
   $('alertInfo').innerHTML=alerts.length>0?alerts.map(a=>'<span class="badge badge-'+(a.level==='red'?'red':'orange')+'">'+a.point+': '+a.type+'='+a.value+'mm ('+a.level+')</span> ').join(''):'<span class="badge badge-green">全部正常</span>';
   populateInclinoHoles();renderTrendChart();
+  renderInclinoMatrix();renderConvergenceProcess();
 }
 
 // ==================== INCLINOMETER ====================
@@ -990,6 +1107,62 @@ function renderInclinoChart(){
   iKeys.forEach((key,idx)=>{const date=key.replace(pjId+'_',''),records=(appData.inclinometerData[key]||[]).filter(r=>r.hole===hole);if(records.length===0)return;records.sort((a,b)=>a.depth-b.depth);datasets.push({label:date,data:records.map(r=>({x:r.cumDisp,y:r.depth})),borderColor:COLORS28[idx%COLORS28.length],backgroundColor:'transparent',borderWidth:2,pointRadius:4});});
   const ctx=$('inclinoCanvas'),existing=Chart.getChart(ctx);if(existing)existing.destroy();if(datasets.length===0)return;
   new Chart(ctx,{type:'line',data:{datasets},options:{responsive:true,maintainAspectRatio:false,scales:{x:{title:{display:true,text:'累计位移 (mm)'},type:'linear',position:'bottom'},y:{title:{display:true,text:'深度 (m)'},reverse:true}},plugins:{title:{display:true,text:'测斜管 '+hole+' 深度-位移剖面图'},legend:{position:'bottom'}}}});
+}
+
+
+// ==================== INCLINO MATRIX (测斜矩阵) ====================
+function renderInclinoMatrix(){
+  var pjId=$("processProject").value;var matrix=appData.incData&&appData.incData[pjId];
+  if(!$("inclinoMatrixSection"))return;
+  if(!matrix||matrix.length===0){$("inclinoMatrixSection").innerHTML="";return;}
+  var allDates=[];matrix.forEach(function(d){Object.keys(d.dates).forEach(function(dt){if(allDates.indexOf(dt)<0)allDates.push(dt);});});
+  allDates.sort();matrix.sort(function(a,b){return a.depth-b.depth;});var depths=matrix.map(function(d){return d.depth;});
+  var cvs=$("inclinoMatrixCanvas");if(cvs){
+    var existing=Chart.getChart(cvs);if(existing)existing.destroy();
+    var datasets=allDates.map(function(date,idx){
+      var color=COLORS28[idx%COLORS28.length];
+      return {label:date,data:matrix.map(function(d){return d.dates[date]!=null?d.dates[date]:null;}),borderColor:color,backgroundColor:"transparent",borderWidth:1.5,pointRadius:0,pointHoverRadius:4,tension:0,fill:false,spanGaps:false};
+    });
+    new Chart(cvs,{type:"line",data:{labels:depths.map(function(d){return d+"m";}),datasets:datasets},options:{responsive:true,maintainAspectRatio:false,scales:{x:{title:{display:true,text:"累计变化量 (mm)"},type:"linear",position:"bottom"},y:{title:{display:true,text:"深度 (m)"},reverse:true}},plugins:{title:{display:true,text:"测斜管 深度-变化量剖面曲线"},legend:{position:"bottom",labels:{boxWidth:10,font:{size:8},padding:3}}}}});
+  }
+  var tbl=$("inclinoMatrixTable");if(tbl){
+    var html="<thead><tr><th>日期</th>";
+    depths.forEach(function(d){html+="<th>"+d+"m</th>";});html+="</tr></thead><tbody>";
+    allDates.forEach(function(date){html+="<tr><td>"+date+"</td>";
+      depths.forEach(function(depth){var row=matrix.find(function(r){return r.depth===depth;});var val=row&&row.dates[date]!=null?row.dates[date]:null;var cls="";
+        if(val!=null){var maxAbs=0;depths.forEach(function(d2){var r2=matrix.find(function(r){return r.depth===d2;});var v2=r2&&r2.dates[date]!=null?r2.dates[date]:null;if(v2!=null&&Math.abs(v2)>maxAbs)maxAbs=Math.abs(v2);});if(Math.abs(val)===maxAbs&&maxAbs>0)cls=" style=\"color:red\"";}
+        html+="<td"+cls+">"+(val!=null?val.toFixed(2):"-")+"</td>";});html+="</tr>";});html+="</tbody>";tbl.innerHTML=html;
+  }
+}
+// ==================== CONVERGENCE (收敛监测) ====================
+function renderConvergenceProcess(){
+  var pjId=$("processProject").value;var convList=appData.convData&&appData.convData[pjId];
+  if(!$("convTable"))return;if(!convList||convList.length===0){$("convTable").innerHTML="";return;}
+  var allDates=[];convList.forEach(function(cp){(cp.records||[]).forEach(function(r){if(allDates.indexOf(r.date)<0)allDates.push(r.date);});});allDates.sort();
+  var summary=[];convList.forEach(function(cp){
+    var recs=cp.records||[];if(recs.length===0)return;recs.sort(function(a,b){return a.date.localeCompare(b.date);});
+    var firstDist=recs[0].distance,lastRec=recs[recs.length-1],lastDist=lastRec.distance;
+    var cumChange=parseFloat((lastDist-firstDist).toFixed(2)),monthlyChange=null,monthlyRate=null;
+    if(recs.length>=2){var prevRec=recs[recs.length-2];monthlyChange=parseFloat((lastDist-prevRec.distance).toFixed(2));var days=Math.max(1,Math.round((new Date(lastRec.date)-new Date(prevRec.date))/86400000));monthlyRate=parseFloat((monthlyChange/days).toFixed(3));}
+    summary.push({pointPair:cp.pointPair,cumChange:cumChange,monthlyChange:monthlyChange,monthlyRate:monthlyRate,records:recs});
+  });if(summary.length===0){$("convTable").innerHTML="";return;}
+  var maxCum=0,maxRate=0;summary.forEach(function(s){if(Math.abs(s.cumChange)>maxCum)maxCum=Math.abs(s.cumChange);if(Math.abs(s.monthlyRate||0)>maxRate)maxRate=Math.abs(s.monthlyRate||0);});
+  var html="<div style=\"margin-bottom:16px;line-height:1.8;font-size:14px;\"><strong>收敛监测说明</strong><br>";
+  html+="监测时段："+allDates[0]+" 至 "+allDates[allDates.length-1]+"，共 "+allDates.length+" 期。<br>";
+  var mp=summary.reduce(function(a,b){return Math.abs(a.cumChange)>=Math.abs(b.cumChange)?a:b;});
+  html+="最大累计变化："+mp.pointPair+"（"+mp.cumChange+" mm）。<br>";
+  mp=summary.reduce(function(a,b){return Math.abs(a.monthlyRate||0)>=Math.abs(b.monthlyRate||0)?a:b;});
+  html+="最大速率："+mp.pointPair+"（"+mp.monthlyRate+" mm/d）。</div>";
+  html+="<div style=\"margin-bottom:8px;\"><strong>表1 收敛变形监测成果（多期对比）</strong></div>";
+  html+="<table style=\"width:100%;border-collapse:collapse\"><thead><tr><th>测点对</th>";
+  allDates.forEach(function(d){html+="<th>"+d+"</th>";});html+="</tr></thead><tbody>";
+  summary.forEach(function(s){html+="<tr><td>"+s.pointPair+"</td>";var dm={};s.records.forEach(function(r){dm[r.date]=r.distance;});
+    allDates.forEach(function(d){html+="<td>"+(dm[d]!=null?dm[d].toFixed(2):"-")+"</td>";});html+="</tr>";});html+="</tbody></table>";
+  html+="<div style=\"margin:16px 0 8px 0;\"><strong>表2 收敛点变形监测成果（测点汇总）</strong></div>";
+  html+="<table style=\"width:100%;border-collapse:collapse\"><thead><tr><th>点号</th><th>本月变化量(mm)</th><th>累计位移(mm)</th><th>本月变化速率(mm/d)</th></tr></thead><tbody>";
+  summary.forEach(function(s){var cRed=Math.abs(s.cumChange)===maxCum&&maxCum>0,rRed=Math.abs(s.monthlyRate||0)===maxRate&&maxRate>0;
+    html+="<tr><td>"+s.pointPair+"</td><td"+(rRed?" style=\"color:red\"":"")+">"+(s.monthlyChange!=null?s.monthlyChange.toFixed(2):"-")+"</td><td"+(cRed?" style=\"color:red\"":"")+">"+s.cumChange.toFixed(2)+"</td><td"+(rRed?" style=\"color:red\"":"")+">"+(s.monthlyRate!=null?s.monthlyRate.toFixed(3):"-")+"</td></tr>";});html+="</tbody></table>";
+  $("convTable").innerHTML=html;
 }
 
 // ==================== TREND CHART ====================
@@ -1081,6 +1254,9 @@ function getProjectDataKeys(pjId){
     const obj=appData[store]||{};
     Object.keys(obj).filter(k=>k.startsWith(pjId+'_')).forEach(k=>allKeys.push({key:k,date:k.replace(pjId+'_',''),store}));
   });
+  // include incData dates
+  var inc=appData.incData&&appData.incData[pjId];if(inc&&inc.length>0){inc.forEach(function(d){Object.keys(d.dates).forEach(function(dt){allKeys.push({key:'inc_'+pjId,date:dt,store:'incData'});});});}
+  var conv=appData.convData&&appData.convData[pjId];if(conv&&conv.length>0){conv.forEach(function(cp){(cp.records||[]).forEach(function(r){allKeys.push({key:'conv_'+pjId+'_'+cp.pointPair,date:r.date,store:'convData'});});});}
   allKeys.sort((a,b)=>a.date.localeCompare(b.date));
   return allKeys;
 }
@@ -1167,6 +1343,24 @@ function buildDataTable(headers,rows,opts={}){
   const allRows=[new TableRow({children:hcells,tableHeader:true})];
   rows.forEach(row=>{
     const cells=row.map(c=>TCell(c,{center:opts.centerCells!==false,width:opts.colWidth||1200}));
+    allRows.push(new TableRow({children:cells}));
+  });
+  return new Table({rows:allRows,width:{size:100,type:WidthType.PERCENTAGE}});
+}
+
+// Helper: convergence summary table with red marking for max values
+function buildCVSummaryTable(headers,rows,cvSummary,cvMaxCum,cvMaxRate){
+  const {Table,TableRow,WidthType}=docx;
+  function cvTCell(text,isRed,isHeader,width){
+    var children=[new TextRun({text:String(text),size:18,font:'宋体',color:isRed?'FF0000':'000000'})];
+    return new docx.TableCell({children:[new Paragraph({alignment:docx.AlignmentType.CENTER,children:children})],width:{size:width||1200,type:WidthType.DXA},
+      shading:isHeader?{fill:'D9E2F3'}:undefined});
+  }
+  var hcells=headers.map(function(h,i){return cvTCell(h,false,true,i===0?1400:1200);});
+  var allRows=[new TableRow({children:hcells,tableHeader:true})];
+  rows.forEach(function(row,i){
+    var s=cvSummary[i],cRed=Math.abs(s.cumChange)===cvMaxCum&&cvMaxCum>0,rRed=Math.abs(s.monthlyRate||0)===cvMaxRate&&cvMaxRate>0;
+    var cells=[cvTCell(row[0],false,false,1400),cvTCell(row[1],rRed,false,1200),cvTCell(row[2],cRed,false,1200),cvTCell(row[3],rRed,false,1200)];
     allRows.push(new TableRow({children:cells}));
   });
   return new Table({rows:allRows,width:{size:100,type:WidthType.PERCENTAGE}});
@@ -1283,6 +1477,9 @@ function generateReport(){
     ['measurements','anchorStress','blastVibration','convergence','waterLevel','inclinometerData'].forEach(store=>{
       Object.keys(appData[store]||{}).filter(k=>k.startsWith(pjId+'_')).forEach(k=>allDates.add(k.replace(pjId+'_','')));
     });
+    // count incData dates (stored differently)
+    var inc=appData.incData&&appData.incData[pjId];if(inc&&inc.length>0){inc.forEach(function(d){Object.keys(d.dates).forEach(function(dt){allDates.add(dt);});});}
+    var conv=appData.convData&&appData.convData[pjId];if(conv&&conv.length>0){conv.forEach(function(cp){(cp.records||[]).forEach(function(r){allDates.add(r.date);});});}
     return allDates.size;
   }
 
@@ -1545,6 +1742,36 @@ function generateReport(){
             }else if(convergenceRecords.length>0){
               const maxConv=Math.max(...convergenceRecords.map(r=>Math.abs(r.cumDisp||r.length||0)));
               descText='收敛监测数据已采集，最大收敛值'+maxConv.toFixed(2)+'mm，未超警戒值。';
+            }else if(appData.convData&&appData.convData[proj.id]&&appData.convData[proj.id].length>0){
+              // 详细收敛报告（来自convData）
+              var convList=appData.convData[proj.id];
+              var allCvDates=[];convList.forEach(function(cp){(cp.records||[]).forEach(function(r){if(allCvDates.indexOf(r.date)<0)allCvDates.push(r.date);});});allCvDates.sort();
+              var cvSummary=[];convList.forEach(function(cp){
+                var recs=cp.records||[];if(recs.length===0)return;recs.sort(function(a,b){return a.date.localeCompare(b.date);});
+                var firstDist=recs[0].distance,lastDist=recs[recs.length-1].distance;
+                var cumChange=parseFloat((lastDist-firstDist).toFixed(2)),monthlyChange=null,monthlyRate=null;
+                if(recs.length>=2){var pr=recs[recs.length-2];monthlyChange=parseFloat((lastDist-pr.distance).toFixed(2));var days=Math.max(1,Math.round((new Date(recs[recs.length-1].date)-new Date(pr.date))/86400000));monthlyRate=parseFloat((monthlyChange/days).toFixed(3));}
+                cvSummary.push({pointPair:cp.pointPair,cumChange:cumChange,monthlyChange:monthlyChange,monthlyRate:monthlyRate,firstDist:firstDist,lastDist:lastDist,records:recs});
+              });
+              var cvMaxCum=0,cvMaxRate=0;cvSummary.forEach(function(s){if(Math.abs(s.cumChange)>cvMaxCum)cvMaxCum=Math.abs(s.cumChange);if(Math.abs(s.monthlyRate||0)>cvMaxRate)cvMaxRate=Math.abs(s.monthlyRate||0);});
+              var cvMaxPair=cvSummary.reduce(function(a,b){return Math.abs(a.cumChange)>=Math.abs(b.cumChange)?a:b;});
+              var cvMaxRPair=cvSummary.reduce(function(a,b){return Math.abs(a.monthlyRate||0)>=Math.abs(b.monthlyRate||0)?a:b;});
+              // Text paragraph
+              docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120,line:360},children:[new TextRun({text:'监测时段：'+allCvDates[0]+' 至 '+allCvDates[allCvDates.length-1]+'，共 '+cvSummary.length+' 个测点对，'+allCvDates.length+' 期数据。最大累计变化为 '+cvMaxPair.pointPair+'（累计 '+cvMaxPair.cumChange+' mm），最大速率为 '+cvMaxRPair.pointPair+'（'+cvMaxRPair.monthlyRate+' mm/d）。',size:22,font:'宋体'})]}));
+              // Table 1: multi-period comparison
+              docChildren.push(new Paragraph({spacing:{before:200,after:80},children:[new TextRun({text:'表'+sectionNum+'-1  收敛变形监测成果（多期对比）',size:20,font:'宋体',bold:true})]}));
+              var t1Headers=['测点对'].concat(allCvDates);
+              var t1Rows=cvSummary.map(function(s){var dm={};s.records.forEach(function(r){dm[r.date]=r.distance;});var row=[s.pointPair];allCvDates.forEach(function(d){row.push(dm[d]!=null?dm[d].toFixed(2):'-');});return row;});
+              docChildren.push(buildDataTable(t1Headers,t1Rows,{colWidth:1200}));
+              // Table 2: summary
+              docChildren.push(new Paragraph({spacing:{before:200,after:80},children:[new TextRun({text:'表'+sectionNum+'-2  收敛点变形监测成果（测点汇总）',size:20,font:'宋体',bold:true})]}));
+              var t2Rows=cvSummary.map(function(s){
+                var cRed=Math.abs(s.cumChange)===cvMaxCum&&cvMaxCum>0,rRed=Math.abs(s.monthlyRate||0)===cvMaxRate&&cvMaxRate>0;
+                return [s.pointPair,(s.monthlyChange!=null?s.monthlyChange.toFixed(2):'-'),s.cumChange.toFixed(2),(s.monthlyRate!=null?s.monthlyRate.toFixed(3):'-')];
+              });
+              var cvTable2=buildCVSummaryTable(['点号','本月变化量(mm)','累计位移(mm)','本月变化速率(mm/d)'],t2Rows,cvSummary,cvMaxCum,cvMaxRate);
+              docChildren.push(cvTable2);
+              descText=''; // skip default desc
             }else if(inclinoRecords.length>0){
               const holes=[...new Set(inclinoRecords.map(r=>r.hole))];
               const maxDisp=Math.max(...inclinoRecords.map(r=>Math.abs(r.cumDisp||0)));
