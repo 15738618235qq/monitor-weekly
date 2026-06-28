@@ -741,14 +741,121 @@ function renderOverview(){
       if(incKeys.length>0)tagHTML+='<span class="tag" style="background:#8B2252;color:#fff">测斜矩阵</span>';
       if(convKeys.length>0)tagHTML+='<span class="tag" style="background:#6B8E23;color:#fff">收敛</span>';
       if(mKeys.length===0&&aKeys.length===0&&bKeys.length===0&&iKeys.length===0&&incKeys.length===0&&convKeys.length===0)tagHTML+='<span class="tag neutral">暂无数据</span>';
-      projHTML+='<div class="project-card"><h4>'+p.name+'</h4><div class="tags">'+tagHTML+'</div><div class="meta">'+p.desc+'</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="switchPanel(\'process\');$(\'processProject\').value=\''+p.id+'\';renderProcess();">查看数据</button><button class="btn btn-sm btn-outline" style="margin-left:4px" onclick="switchPanel(\'import\');$(\'importProject\').value=\''+p.id+'\';onFormatChange();">导入数据</button></div></div>';
+      projHTML+='<div class="project-card"><div class="card-actions"><button class="btn-icon primary" onclick="event.stopPropagation();showProjectModal(\''+p.id+'\')" title="编辑">&#9998;</button><button class="btn-icon danger" onclick="event.stopPropagation();deleteProject(\''+p.id+'\')" title="删除">&#10005;</button></div><h4>'+p.name+'</h4><div class="tags">'+tagHTML+'</div><div class="meta">'+p.desc+'</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="switchPanel(\'process\');$(\'processProject\').value=\''+p.id+'\';renderProcess();">查看数据</button><button class="btn btn-sm btn-outline" style="margin-left:4px" onclick="switchPanel(\'import\');$(\'importProject\').value=\''+p.id+'\';onFormatChange();">导入数据</button></div></div>';
     });
     projHTML+='</div>';
+    projHTML+='<button class="btn-add-project" onclick="showProjectModal()">+ 新增子项目</button>';
   });
   $('projectList').innerHTML=projHTML||'<div class="empty-state">暂无项目</div>';
 
   const logs=JSON.parse(localStorage.getItem(LOG_KEY)||'[]');
   $('recentLogs').innerHTML=logs.slice(-10).reverse().map(l=>'<div style="padding:4px 0;border-bottom:1px solid #f0f0f0">['+l.time+'] <strong>'+l.action+'</strong>: '+l.detail+'</div>').join('')||'<div class="empty-state">暂无操作日志</div>';
+}
+
+// ==================== PROJECT CRUD ====================
+function showProjectModal(pjId){
+  if(pjId){
+    const p=(appData.projects||[]).find(x=>x.id===pjId);
+    if(p){
+      $('projectEditId').value=p.id;
+      $('projectEditName').value=p.name;
+      $('projectEditDesc').value=p.desc||'';
+      $('projectEditArea').value=p.area||'';
+      $('projectEditGroup').value=p.group||'';
+      $('projectModalTitle').textContent='编辑子项目';
+      // Pre-check types based on existing data (simplified: check all stores)
+      const cbs=document.querySelectorAll('#projectEditTypes input[type="checkbox"]');
+      cbs.forEach(cb=>{cb.checked=false;});
+      // Mark types that have data for this project
+      const typeMap={measurements:'measurements',anchorStress:'anchorStress',blastVibration:'blastVibration',convergence:'convergence',waterLevel:'waterLevel',inclinometerData:'inclinometerData',incData:'incData',convData:'convData'};
+      Object.keys(typeMap).forEach(cbVal=>{
+        const storeName=typeMap[cbVal];
+        if(storeName==='incData'||storeName==='convData'){if(appData[storeName]&&appData[storeName][pjId]){const cb=document.querySelector('#projectEditTypes input[value="'+cbVal+'"]');if(cb)cb.checked=true;}}
+        else{const exists=Object.keys(appData[storeName]||{}).some(k=>k.startsWith(pjId+'_'));if(exists){const cb=document.querySelector('#projectEditTypes input[value="'+cbVal+'"]');if(cb)cb.checked=true;}}
+      });
+    }
+  }else{
+    $('projectEditId').value='';
+    $('projectEditName').value='';
+    $('projectEditDesc').value='';
+    $('projectEditArea').value='矿山加工系统';
+    $('projectEditGroup').value='矿山';
+    $('projectModalTitle').textContent='新增子项目';
+    const cbs=document.querySelectorAll('#projectEditTypes input[type="checkbox"]');
+    cbs.forEach(cb=>{cb.checked=false;});
+  }
+  $('projectModal').classList.add('show');
+}
+
+function saveProject(){
+  const pjId=$('projectEditId').value;
+  const name=$('projectEditName').value.trim();
+  const desc=$('projectEditDesc').value.trim();
+  const area=$('projectEditArea').value;
+  const group=$('projectEditGroup').value;
+  if(!name){toast('请输入项目名称','error');return;}
+  if(!area){toast('请选择所属区域','error');return;}
+
+  if(pjId){
+    // Edit existing
+    const p=appData.projects.find(x=>x.id===pjId);
+    if(p){p.name=name;p.desc=desc;p.area=area;p.group=group;}
+    toast('项目已更新','success');
+    addOperationLog('编辑项目','修改 '+name+' ('+pjId+')');
+  }else{
+    // Generate new ID
+    const existingIds=new Set((appData.projects||[]).map(p=>p.id));
+    let newId='p34';let n=34;
+    while(existingIds.has(newId)){n++;newId='p'+n;}
+    appData.projects.push({id:newId,name,desc,area,group});
+    toast('新项目已创建','success');
+    addOperationLog('新增项目','创建 '+name+' ('+newId+')');
+  }
+  saveData(appData);
+  $('projectModal').classList.remove('show');
+  renderOverview();populateAllSelects();
+}
+
+function cleanupProjectData(pjId){
+  // Remove all data associated with this project from all stores
+  const storesWithPrefix=['measurements','inclinometerData','anchorStress','blastVibration','convergence','waterLevel','staticLevel','tunnelSettlement','historyCumData','stages'];
+  storesWithPrefix.forEach(s=>{
+    const obj=appData[s]||{};
+    Object.keys(obj).forEach(k=>{if(k.startsWith(pjId+'_'))delete obj[k];});
+  });
+  // Stores with direct project ID key
+  ['incData','convData'].forEach(s=>{
+    if(appData[s]&&appData[s][pjId])delete appData[s][pjId];
+  });
+  // Baselines
+  if(appData.baselines&&appData.baselines[pjId])delete appData.baselines[pjId];
+  if(appData.baselineTypes&&appData.baselineTypes[pjId])delete appData.baselineTypes[pjId];
+}
+
+function deleteProject(pjId){
+  const p=(appData.projects||[]).find(x=>x.id===pjId);
+  if(!p){toast('项目不存在','error');return;}
+  // Count associated data
+  let dataCount=0;
+  ['measurements','inclinometerData','anchorStress','blastVibration','convergence','waterLevel','staticLevel','tunnelSettlement'].forEach(s=>{
+    dataCount+=Object.keys(appData[s]||{}).filter(k=>k.startsWith(pjId+'_')).length;
+  });
+  if(appData.incData&&appData.incData[pjId])dataCount++;
+  if(appData.convData&&appData.convData[pjId])dataCount++;
+  if(appData.baselines&&appData.baselines[pjId])dataCount++;
+  if(appData.baselineTypes&&appData.baselineTypes[pjId])dataCount++;
+
+  const confirmMsg=dataCount>0?'将删除项目"'+p.name+'"及其关联的 '+dataCount+' 条监测数据，此操作不可撤销。确认删除？':'确认删除项目"'+p.name+'"？';
+  if(!confirm(confirmMsg))return;
+
+  // Remove from projects list
+  appData.projects=appData.projects.filter(x=>x.id!==pjId);
+  // Cleanup all associated data
+  cleanupProjectData(pjId);
+  saveData(appData);
+  toast('项目"'+p.name+'"已删除','success');
+  addOperationLog('删除项目','删除 '+p.name+' ('+pjId+')，清理关联数据');
+  renderOverview();populateAllSelects();
 }
 
 function addOperationLog(action,detail){

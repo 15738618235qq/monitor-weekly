@@ -98,6 +98,20 @@ a{color:var(--primary);text-decoration:none}
 .tag.purple{background:rgba(123,31,162,0.08);color:#7B1FA2}
 .tag.cyan{background:rgba(0,163,224,0.08);color:#006064}
 .project-card .meta{font-size:12px;color:var(--text-secondary);margin-top:8px}
+.project-card .card-actions{position:absolute;top:12px;right:12px;display:flex;gap:6px;opacity:0;transition:opacity 0.2s}
+.project-card:hover .card-actions{opacity:1}
+.project-card{position:relative}
+.btn-icon{width:28px;height:28px;border-radius:var(--radius-xs);border:1px solid var(--border);background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:13px;display:inline-flex;align-items:center;justify-content:center;transition:all 0.15s;font-family:inherit}
+.btn-icon:hover{background:var(--bg);color:var(--text)}
+.btn-icon.danger:hover{background:rgba(220,38,38,0.06);color:var(--danger);border-color:var(--danger)}
+.btn-icon.primary:hover{background:var(--primary-light);color:var(--primary);border-color:var(--primary)}
+.btn-add-project{display:block;width:100%;padding:14px;border:2px dashed var(--border);border-radius:var(--radius);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:13px;font-family:inherit;transition:all 0.2s;margin-top:4px}
+.btn-add-project:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-light)}
+/* Project edit modal */
+.project-edit-form .form-row{display:flex;gap:14px;flex-wrap:wrap}
+.project-edit-form .form-row .form-group{flex:1;min-width:200px}
+.project-edit-form .checkbox-group{display:flex;flex-wrap:wrap;gap:10px 20px;margin-top:4px}
+.project-edit-form .checkbox-group label{display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:400;cursor:pointer}
 
 /* === BUTTONS === */
 .btn{padding:9px 18px;border:none;border-radius:var(--radius-sm);cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s ease;display:inline-flex;align-items:center;gap:6px;font-family:inherit;letter-spacing:0.2px}
@@ -639,7 +653,46 @@ CREATE INDEX IF NOT EXISTS idx_m_project_key ON measurements(project_key);
 </div><!-- /main-content -->
 </div><!-- /main-area -->
 
-<div class="modal-overlay" id="projectModal"><div class="modal" id="projectModalContent"></div></div>
+<div class="modal-overlay" id="projectModal"><div class="modal" id="projectModalContent">
+<h3 id="projectModalTitle">编辑子项目</h3>
+<div class="project-edit-form">
+<input type="hidden" id="projectEditId">
+<div class="form-row">
+<div class="form-group"><label>所属区域</label><select id="projectEditArea">
+<option value="矿山加工系统">矿山加工系统</option>
+<option value="物流廊道">物流廊道</option>
+<option value="陆域堆场-成品料">陆域堆场-成品料</option>
+<option value="陆域堆场-试验区">陆域堆场-试验区</option>
+<option value="陆域堆场-推广区">陆域堆场-推广区</option>
+<option value="码头">码头平台</option>
+</select></div>
+<div class="form-group"><label>归属分组</label><select id="projectEditGroup">
+<option value="矿山">矿山</option>
+<option value="物流廊道">物流廊道</option>
+<option value="陆域堆场">陆域堆场</option>
+<option value="码头">码头</option>
+</select></div>
+</div>
+<div class="form-group"><label>项目名称</label><input type="text" id="projectEditName" placeholder="例如：新增测斜孔-S1"></div>
+<div class="form-group"><label>项目描述</label><input type="text" id="projectEditDesc" placeholder="例如：S1-S5共5个测点"></div>
+<div class="form-group"><label>监测类型（可多选）</label>
+<div class="checkbox-group" id="projectEditTypes">
+<label><input type="checkbox" value="measurements"> 位移监测</label>
+<label><input type="checkbox" value="anchorStress"> 锚杆应力</label>
+<label><input type="checkbox" value="blastVibration"> 爆破振动</label>
+<label><input type="checkbox" value="convergence"> 收敛</label>
+<label><input type="checkbox" value="waterLevel"> 水位</label>
+<label><input type="checkbox" value="inclinometerData"> 测斜（孔数据）</label>
+<label><input type="checkbox" value="incData"> 测斜矩阵</label>
+<label><input type="checkbox" value="convData"> 收敛测线</label>
+</div>
+</div>
+<div class="btn-group">
+<button class="btn btn-outline" onclick="$('projectModal').classList.remove('show')">取消</button>
+<button class="btn btn-primary" onclick="saveProject()">保存</button>
+</div>
+</div>
+</div></div>
 <div class="modal-overlay" id="versionDetailModal"><div class="modal" id="versionDetailContent"></div></div>
 <div class="modal-overlay" id="confirmModal"><div class="modal" id="confirmModalContent"></div></div>
 
