@@ -11,7 +11,7 @@ const PENDING_SYNC_KEY='monitorPendingSync_v5';
 
 // Supabase Cloud Sync Config
 const SUPABASE_URL='https://sakehlndzmwasqpavzxy.supabase.co';
-const SUPABASE_ANON_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InNha2VobG5kem13YXNxcGF2enh5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NjI1NjgsImV4cCI6MjA5ODAzODU2OH0.PjR4cHMot8anj5tmHwze4WEsgDmvXyNhUZiSBGqh04U';
+const SUPABASE_ANON_KEY='sb_publishable_onA5Jeg4w4BfdBpcFmfmnQ_eZdRsEQ9';
 let supabase=null,cloudUser=null,supabaseConnected=false;
 let pendingSyncQueue=[],realtimeChannel=null,onlineUserCount=0;
 
