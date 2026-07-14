@@ -1377,7 +1377,7 @@ function renderConvergenceProcess(){
     var recs=cp.records||[];if(recs.length===0)return;recs.sort(function(a,b){return a.date.localeCompare(b.date);});
     var firstDist=recs[0].distance,lastRec=recs[recs.length-1],lastDist=lastRec.distance;
     var cumChange=parseFloat((lastDist-firstDist).toFixed(2)),monthlyChange=null,monthlyRate=null;
-    if(recs.length>=2){var prevRec=recs[recs.length-2];monthlyChange=parseFloat((lastDist-prevRec.distance).toFixed(2));var days=Math.max(1,Math.round((new Date(lastRec.date)-new Date(prevRec.date))/86400000));monthlyRate=parseFloat((monthlyChange/days).toFixed(3));}
+    if(recs.length>=2){var prevRec=recs[recs.length-2];monthlyChange=parseFloat((lastDist-prevRec.distance).toFixed(2));var days=Math.max(1,Math.round((new Date(lastRec.date)-new Date(prevRec.date))/86400000));monthlyRate=parseFloat((monthlyChange/days).toFixed(2));}
     summary.push({pointPair:cp.pointPair,cumChange:cumChange,monthlyChange:monthlyChange,monthlyRate:monthlyRate,records:recs});
   });if(summary.length===0){$("convTable").innerHTML="";return;}
   var maxCum=0,maxRate=0;summary.forEach(function(s){if(Math.abs(s.cumChange)>maxCum)maxCum=Math.abs(s.cumChange);if(Math.abs(s.monthlyRate||0)>maxRate)maxRate=Math.abs(s.monthlyRate||0);});
@@ -1395,7 +1395,7 @@ function renderConvergenceProcess(){
   html+="<div style=\"margin:16px 0 8px 0;\"><strong>表2 收敛点变形监测成果（测点汇总）</strong></div>";
   html+="<table style=\"width:100%;border-collapse:collapse\"><thead><tr><th>点号</th><th>本月变化量(mm)</th><th>累计位移(mm)</th><th>本月变化速率(mm/d)</th></tr></thead><tbody>";
   summary.forEach(function(s){var cRed=Math.abs(s.cumChange)===maxCum&&maxCum>0,rRed=Math.abs(s.monthlyRate||0)===maxRate&&maxRate>0;
-    html+="<tr><td>"+s.pointPair+"</td><td"+(rRed?" style=\"color:red\"":"")+">"+(s.monthlyChange!=null?s.monthlyChange.toFixed(2):"-")+"</td><td"+(cRed?" style=\"color:red\"":"")+">"+s.cumChange.toFixed(2)+"</td><td"+(rRed?" style=\"color:red\"":"")+">"+(s.monthlyRate!=null?s.monthlyRate.toFixed(3):"-")+"</td></tr>";});html+="</tbody></table>";
+    html+="<tr><td>"+s.pointPair+"</td><td"+(rRed?" style=\"color:red\"":"")+">"+(s.monthlyChange!=null?s.monthlyChange.toFixed(2):"-")+"</td><td"+(cRed?" style=\"color:red\"":"")+">"+s.cumChange.toFixed(2)+"</td><td"+(rRed?" style=\"color:red\"":"")+">"+(s.monthlyRate!=null?s.monthlyRate.toFixed(2):"-")+"</td></tr>";});html+="</tbody></table>";
   $("convTable").innerHTML=html;
 }
 
@@ -1638,8 +1638,8 @@ function computeMonthlyChange(pjId, latestDate){
     const prev=prevRecs?prevRecs.find(x=>x.point===r.point):null;
     const monthlyDisp=prev&&r.cumDisp!=null&&prev.cumDisp!=null?parseFloat((r.cumDisp-prev.cumDisp).toFixed(2)):(r.disp!=null?parseFloat(r.disp.toFixed(2)):null);
     const monthlySettle=prev&&r.cumSettle!=null&&prev.cumSettle!=null?parseFloat((r.cumSettle-prev.cumSettle).toFixed(2)):(r.settle!=null?parseFloat(r.settle.toFixed(2)):null);
-    const rateDisp=monthlyDisp!=null?parseFloat((monthlyDisp/daysBetween).toFixed(3)):null;
-    const rateSettle=monthlySettle!=null?parseFloat((monthlySettle/daysBetween).toFixed(3)):null;
+    const rateDisp=monthlyDisp!=null?parseFloat((monthlyDisp/daysBetween).toFixed(2)):null;
+    const rateSettle=monthlySettle!=null?parseFloat((monthlySettle/daysBetween).toFixed(2)):null;
     result[r.point]={monthlyDisp,monthlySettle,rateDisp,rateSettle,daysBetween};
   });
   return result;
@@ -1936,10 +1936,10 @@ function generateReport(){
                 {t:proj.latestDate},
                 {t:cumDisp!=null?cumDisp.toFixed(2):'-',color:isRed[0]?'FF0000':undefined},
                 {t:mDisp!=null?mDisp.toFixed(2):'-',color:isRed[1]?'FF0000':undefined},
-                {t:rDisp!=null?rDisp.toFixed(3):'-',color:isRed[2]?'FF0000':undefined},
+                {t:rDisp!=null?rDisp.toFixed(2):'-',color:isRed[2]?'FF0000':undefined},
                 {t:cumSettle!=null?cumSettle.toFixed(2):'-',color:isRed[3]?'FF0000':undefined},
                 {t:mSettle!=null?mSettle.toFixed(2):'-',color:isRed[4]?'FF0000':undefined},
-                {t:rSettle!=null?rSettle.toFixed(3):'-',color:isRed[5]?'FF0000':undefined},
+                {t:rSettle!=null?rSettle.toFixed(2):'-',color:isRed[5]?'FF0000':undefined},
                 {t:''}
               ];
 
@@ -1987,7 +1987,7 @@ function generateReport(){
                 var recs=cp.records||[];if(recs.length===0)return;recs.sort(function(a,b){return a.date.localeCompare(b.date);});
                 var firstDist=recs[0].distance,lastDist=recs[recs.length-1].distance;
                 var cumChange=parseFloat((lastDist-firstDist).toFixed(2)),monthlyChange=null,monthlyRate=null;
-                if(recs.length>=2){var pr=recs[recs.length-2];monthlyChange=parseFloat((lastDist-pr.distance).toFixed(2));var days=Math.max(1,Math.round((new Date(recs[recs.length-1].date)-new Date(pr.date))/86400000));monthlyRate=parseFloat((monthlyChange/days).toFixed(3));}
+                if(recs.length>=2){var pr=recs[recs.length-2];monthlyChange=parseFloat((lastDist-pr.distance).toFixed(2));var days=Math.max(1,Math.round((new Date(recs[recs.length-1].date)-new Date(pr.date))/86400000));monthlyRate=parseFloat((monthlyChange/days).toFixed(2));}
                 cvSummary.push({pointPair:cp.pointPair,cumChange:cumChange,monthlyChange:monthlyChange,monthlyRate:monthlyRate,firstDist:firstDist,lastDist:lastDist,records:recs});
               });
               var cvMaxCum=0,cvMaxRate=0;cvSummary.forEach(function(s){if(Math.abs(s.cumChange)>cvMaxCum)cvMaxCum=Math.abs(s.cumChange);if(Math.abs(s.monthlyRate||0)>cvMaxRate)cvMaxRate=Math.abs(s.monthlyRate||0);});
@@ -2004,7 +2004,7 @@ function generateReport(){
               docChildren.push(new Paragraph({spacing:{before:200,after:80},children:[new TextRun({text:'表'+sectionNum+'-2  收敛点变形监测成果（测点汇总）',size:20,font:'宋体',bold:true})]}));
               var t2Rows=cvSummary.map(function(s){
                 var cRed=Math.abs(s.cumChange)===cvMaxCum&&cvMaxCum>0,rRed=Math.abs(s.monthlyRate||0)===cvMaxRate&&cvMaxRate>0;
-                return [s.pointPair,(s.monthlyChange!=null?s.monthlyChange.toFixed(2):'-'),s.cumChange.toFixed(2),(s.monthlyRate!=null?s.monthlyRate.toFixed(3):'-')];
+                return [s.pointPair,(s.monthlyChange!=null?s.monthlyChange.toFixed(2):'-'),s.cumChange.toFixed(2),(s.monthlyRate!=null?s.monthlyRate.toFixed(2):'-')];
               });
               var cvTable2=buildCVSummaryTable(['点号','本月变化量(mm)','累计位移(mm)','本月变化速率(mm/d)'],t2Rows,cvSummary,cvMaxCum,cvMaxRate);
               docChildren.push(cvTable2);
