@@ -2181,23 +2181,39 @@ function generateReport(){
       // ============ CHAPTER 6: 存在的主要问题与建议 ============
       docChildren.push(new Paragraph({spacing:{before:200,after:200},children:[new TextRun({text:'6  存在的主要问题与建议',size:30,bold:true,font:'宋体'})]}));
 
-      // Collect all alerts
-      const allAlerts=[];
+      // Collect alerts and per-project statistics
+      const projectStats={};
       Object.values(areas).forEach(a=>{a.projects.forEach(p=>{
         const keys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(p.id+'_')).sort();
         if(keys.length>0){
           const recs=appData.measurements[keys[keys.length-1]]||[];
+          if(!projectStats[p.name])projectStats[p.name]={hasAlert:false,maxCumDisp:{point:'',val:0},maxCumSettle:{point:'',val:0},maxRate:{point:'',val:0},maxSettleRate:{point:'',val:0}};
           recs.forEach(r=>{
-            if(Math.abs(r.cumDisp||0)>=(th.cum_orange||50))allAlerts.push({point:r.point,proj:p.name,val:r.cumDisp,type:'位移'});
-            if(Math.abs(r.cumSettle||0)>=(th.settle_orange||30))allAlerts.push({point:r.point,proj:p.name,val:r.cumSettle,type:'沉降'});
+            const absCumDisp=Math.abs(r.cumDisp||0);
+            const absCumSettle=Math.abs(r.cumSettle||0);
+            const absRate=Math.abs(r.disp||0);
+            const absSettleRate=Math.abs(r.settle||0);
+            if(absCumDisp>=(th.cum_orange||50)||absCumSettle>=(th.settle_orange||30))projectStats[p.name].hasAlert=true;
+            if(absCumDisp>Math.abs(projectStats[p.name].maxCumDisp.val))projectStats[p.name].maxCumDisp={point:r.point,val:r.cumDisp};
+            if(absCumSettle>Math.abs(projectStats[p.name].maxCumSettle.val))projectStats[p.name].maxCumSettle={point:r.point,val:r.cumSettle};
+            if(absRate>Math.abs(projectStats[p.name].maxRate.val))projectStats[p.name].maxRate={point:r.point,val:r.disp};
+            if(absSettleRate>Math.abs(projectStats[p.name].maxSettleRate.val))projectStats[p.name].maxSettleRate={point:r.point,val:r.settle};
           });
         }
       });});
 
-      if(allAlerts.length>0){
+      const alertProjects=Object.keys(projectStats).filter(k=>projectStats[k].hasAlert);
+      if(alertProjects.length>0){
         docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'本期监测发现以下预警情况需重点关注：',size:22,font:'宋体',bold:true})]}));
-        allAlerts.slice(0,15).forEach(a=>{
-          docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:60},children:[new TextRun({text:a.proj+' '+a.point+'号测点：'+a.type+'累计'+a.val.toFixed(2)+'mm，超过预警值，建议加强监测频率并分析原因。',size:22,font:'宋体'})]}));
+        alertProjects.forEach(proj=>{
+          const s=projectStats[proj];
+          let text='本期监测中，'+proj+'子项目多个测点变形超过预警值';
+          if(Math.abs(s.maxCumDisp.val)>0&&s.maxCumDisp.point)text+='，其中最大累计位移为'+s.maxCumDisp.point+'号测点的'+Math.abs(s.maxCumDisp.val).toFixed(2)+'mm';
+          if(Math.abs(s.maxCumSettle.val)>0&&s.maxCumSettle.point)text+='，最大累计沉降为'+s.maxCumSettle.point+'号测点的'+Math.abs(s.maxCumSettle.val).toFixed(2)+'mm';
+          if(Math.abs(s.maxRate.val)>0&&s.maxRate.point)text+='，最大变化速率为'+s.maxRate.point+'号测点的'+Math.abs(s.maxRate.val).toFixed(2)+'mm/d';
+          if(Math.abs(s.maxSettleRate.val)>0&&s.maxSettleRate.point)text+='，最大沉降速率为'+s.maxSettleRate.point+'号测点的'+Math.abs(s.maxSettleRate.val).toFixed(2)+'mm/d';
+          text+='，建议加强监测频率并分析原因。';
+          docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:60},children:[new TextRun({text:text,size:22,font:'宋体'})]}));
         });
       }else{
         docChildren.push(new Paragraph({indent:{firstLine:480},spacing:{after:120},children:[new TextRun({text:'本期各监测项目数据均在正常范围内，未发现异常预警情况。',size:22,font:'宋体'})]}));
