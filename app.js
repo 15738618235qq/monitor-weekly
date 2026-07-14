@@ -453,6 +453,7 @@ function viewProjectData(pid){
 }
 
 function $(id){return document.getElementById(id);}
+function scrollToElement(el){if(el)el.scrollIntoView({behavior:'smooth',block:'center'});}
 function formatDate(d){return d.toISOString().split('T')[0];}
 function toast(msg,type='info'){
   const t=document.createElement('div');t.className='toast '+type;t.textContent=msg;
@@ -1557,8 +1558,8 @@ function editHistRecord(pjId,point,date){
   histEditState={pjId:pjId,point:point,date:date};
   $('histEditBar').style.display='block';
   $('histEditTarget').textContent=point+' '+date;
-  document.querySelector('#history .card .btn-primary').textContent='更新记录';
-  document.querySelector('#history .card .btn-primary').style.background='var(--warning)';
+  document.querySelector('#panel-history .card .btn-primary').textContent='更新记录';
+  document.querySelector('#panel-history .card .btn-primary').style.background='var(--warning)';
   scrollToElement($('histPoint'));
 }
 
@@ -1567,7 +1568,7 @@ function cancelHistEdit(){
   $('histEditBar').style.display='none';
   $('histPoint').value='';$('histDate').value=formatDate(new Date());
   $('histCumDisp').value='';$('histCumSettle').value='';
-  var addBtn=document.querySelector('#history .card .btn-primary');
+  var addBtn=document.querySelector('#panel-history .card .btn-primary');
   addBtn.textContent='添加记录';addBtn.style.background='';
 }
 
@@ -1575,13 +1576,16 @@ function saveHistRecord(){
   var pjId=$('histProject').value,point=$('histPoint').value.trim(),date=$('histDate').value,cumDisp=parseFloat($('histCumDisp').value),cumSettle=parseFloat($('histCumSettle').value);
   if(!pjId||!point||!date||isNaN(cumDisp)){toast('请填写完整信息','error');return;}
   if(!appData.historyCumData)appData.historyCumData={};
-  if(!appData.historyCumData[pjId])appData.historyCumData[pjId]={};
-  if(!appData.historyCumData[pjId][point])appData.historyCumData[pjId][point]=[];
 
   if(histEditState.pjId&&histEditState.point&&histEditState.date){
-    appData.historyCumData[histEditState.pjId][histEditState.point]=appData.historyCumData[histEditState.pjId][histEditState.point].filter(function(e){return e.date!==histEditState.date;});
-    if(appData.historyCumData[histEditState.pjId][histEditState.point].length===0)delete appData.historyCumData[histEditState.pjId][histEditState.point];
+    if(appData.historyCumData[histEditState.pjId]&&appData.historyCumData[histEditState.pjId][histEditState.point]){
+      appData.historyCumData[histEditState.pjId][histEditState.point]=appData.historyCumData[histEditState.pjId][histEditState.point].filter(function(e){return e.date!==histEditState.date;});
+      if(appData.historyCumData[histEditState.pjId][histEditState.point].length===0)delete appData.historyCumData[histEditState.pjId][histEditState.point];
+    }
   }
+
+  if(!appData.historyCumData[pjId])appData.historyCumData[pjId]={};
+  if(!appData.historyCumData[pjId][point])appData.historyCumData[pjId][point]=[];
 
   appData.historyCumData[pjId][point].push({date:date,cumDisp:cumDisp,cumSettle:isNaN(cumSettle)?null:cumSettle});
   saveData(appData);renderHistPanel();cancelHistEdit();
