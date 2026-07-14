@@ -1180,6 +1180,7 @@ function populateProcessSelect(){
 function populateProcessDates(){
   const pjId=$('processProject').value,keys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')).sort();
   const dates=keys.map(k=>k.replace(pjId+'_',''));const sel=$('processDate');sel.innerHTML=dates.map(d=>'<option value="'+d+'">'+d+'</option>').join('');
+  $('trendProject').value=pjId;
   renderPeriodList();
   if(dates.length>0)renderProcess();
   else{$('dispTable').innerHTML='<div class="empty-state">无数据</div>';$('settleTable').innerHTML='';$('alertInfo').innerHTML='';}
@@ -1412,7 +1413,7 @@ function buildTrendDatasets(allDates,pointValuesMap){
   return datasets;
 }
 function renderTrendChart(){
-  const pjId=$('trendProject').value;if(!pjId)return;
+  const pjId=$('processProject').value;if(!pjId)return;
   const {allDates,pointValuesMap}=buildTrendData(pjId),datasets=buildTrendDatasets(allDates,pointValuesMap);
   const ctx=$('trendCanvas'),existing=Chart.getChart(ctx);if(existing)existing.destroy();if(datasets.length===0)return;
   new Chart(ctx,{type:'line',data:{labels:allDates,datasets},options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'nearest',intersect:false},plugins:{title:{display:true,text:'累计位移趋势图 ('+datasets.length+'个测点)'},legend:{position:'top',labels:{boxWidth:12,font:{size:10},padding:6}}},scales:{x:{title:{display:true,text:'日期'},grid:{display:true,color:'rgba(0,0,0,0.06)'}},y:{title:{display:true,text:'累计位移 (mm)'},grid:{color:'rgba(0,0,0,0.06)'}}}}});
