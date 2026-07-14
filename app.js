@@ -429,6 +429,14 @@ const AREA_COLORS={矿山:'#1a73e8','物流廊道':'#e37400','陆域堆场':'#7b
 let appData=null;
 let currentUser=null;
 
+function viewProjectData(pid){
+  switchPanel('process');
+  setTimeout(function(){
+    $('processProject').value=pid;
+    populateProcessDates();
+  },50);
+}
+
 function $(id){return document.getElementById(id);}
 function formatDate(d){return d.toISOString().split('T')[0];}
 function toast(msg,type='info'){
@@ -690,7 +698,7 @@ function switchPanel(panelName){
   if(panelName==='dashboard')renderOverview();
   if(panelName==='baseline'){populateBaselineSelect();loadBaselineType();}
   if(panelName==='import'){populateImportSelect();showImportHint();onFormatChange();}
-  if(panelName==='process'){populateProcessSelect();if(window._pendingProcessProject){$('processProject').value=window._pendingProcessProject;window._pendingProcessProject=null;populateProcessDates();}}
+  if(panelName==='process'){populateProcessSelect();}
   if(panelName==='history'){populateHistorySelect();renderHistPanel();}
   if(panelName==='report'){populateReportSelect();}
   if(panelName==='share')populateShareSelect();
@@ -743,7 +751,7 @@ function renderOverview(){
       if(incKeys.length>0)tagHTML+='<span class="tag" style="background:#8B2252;color:#fff">测斜矩阵</span>';
       if(convKeys.length>0)tagHTML+='<span class="tag" style="background:#6B8E23;color:#fff">收敛</span>';
       if(mKeys.length===0&&aKeys.length===0&&bKeys.length===0&&iKeys.length===0&&incKeys.length===0&&convKeys.length===0)tagHTML+='<span class="tag neutral">暂无数据</span>';
-      projHTML+='<div class="project-card"><div class="card-actions"><button class="btn-icon primary" onclick="event.stopPropagation();showProjectModal(\''+p.id+'\')" title="编辑">&#9998;</button><button class="btn-icon danger" onclick="event.stopPropagation();deleteProject(\''+p.id+'\')" title="删除">&#10005;</button></div><h4>'+p.name+'</h4><div class="tags">'+tagHTML+'</div><div class="meta">'+p.desc+'</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="window._pendingProcessProject=\''+p.id+'\';switchPanel(\'process\');">查看数据</button><button class="btn btn-sm btn-outline" style="margin-left:4px" onclick="switchPanel(\'import\');$(\'importProject\').value=\''+p.id+'\';onFormatChange();">导入数据</button></div></div>';
+      projHTML+='<div class="project-card"><div class="card-actions"><button class="btn-icon primary" onclick="event.stopPropagation();showProjectModal(\''+p.id+'\')" title="编辑">&#9998;</button><button class="btn-icon danger" onclick="event.stopPropagation();deleteProject(\''+p.id+'\')" title="删除">&#10005;</button></div><h4>'+p.name+'</h4><div class="tags">'+tagHTML+'</div><div class="meta">'+p.desc+'</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="viewProjectData(\''+p.id+'\');">查看数据</button><button class="btn btn-sm btn-outline" style="margin-left:4px" onclick="switchPanel(\'import\');$(\'importProject\').value=\''+p.id+'\';onFormatChange();">导入数据</button></div></div>';
     });
     projHTML+='</div>';
     projHTML+='<button class="btn-add-project" onclick="showProjectModal()">+ 新增子项目</button>';
@@ -1285,7 +1293,7 @@ function saveEditedPeriod(){
   });
   if(updated.length===0)return;
   appData.measurements[key]=updated;
-  saveData();
+  saveData(appData);
   isEditing=false;editingDate=null;
   $('editModeBar').style.display='none';
   populateProcessDates();
@@ -1302,7 +1310,7 @@ function deletePeriod(date){
   var pjId=$('processProject').value;
   var key=pjId+'_'+date;
   delete appData.measurements[key];
-  saveData();
+  saveData(appData);
   renderPeriodList();
   $('processDate').value='';
   renderProcess();
