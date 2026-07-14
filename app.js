@@ -743,7 +743,7 @@ function renderOverview(){
       if(incKeys.length>0)tagHTML+='<span class="tag" style="background:#8B2252;color:#fff">测斜矩阵</span>';
       if(convKeys.length>0)tagHTML+='<span class="tag" style="background:#6B8E23;color:#fff">收敛</span>';
       if(mKeys.length===0&&aKeys.length===0&&bKeys.length===0&&iKeys.length===0&&incKeys.length===0&&convKeys.length===0)tagHTML+='<span class="tag neutral">暂无数据</span>';
-      projHTML+='<div class="project-card"><div class="card-actions"><button class="btn-icon primary" onclick="event.stopPropagation();showProjectModal(\''+p.id+'\')" title="编辑">&#9998;</button><button class="btn-icon danger" onclick="event.stopPropagation();deleteProject(\''+p.id+'\')" title="删除">&#10005;</button></div><h4>'+p.name+'</h4><div class="tags">'+tagHTML+'</div><div class="meta">'+p.desc+'</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="switchPanel(\'process\');$(\'processProject\').value=\''+p.id+'\';renderProcess();">查看数据</button><button class="btn btn-sm btn-outline" style="margin-left:4px" onclick="switchPanel(\'import\');$(\'importProject\').value=\''+p.id+'\';onFormatChange();">导入数据</button></div></div>';
+      projHTML+='<div class="project-card"><div class="card-actions"><button class="btn-icon primary" onclick="event.stopPropagation();showProjectModal(\''+p.id+'\')" title="编辑">&#9998;</button><button class="btn-icon danger" onclick="event.stopPropagation();deleteProject(\''+p.id+'\')" title="删除">&#10005;</button></div><h4>'+p.name+'</h4><div class="tags">'+tagHTML+'</div><div class="meta">'+p.desc+'</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="switchPanel(\'process\');$(\'processProject\').value=\''+p.id+'\';populateProcessDates();">查看数据</button><button class="btn btn-sm btn-outline" style="margin-left:4px" onclick="switchPanel(\'import\');$(\'importProject\').value=\''+p.id+'\';onFormatChange();">导入数据</button></div></div>';
     });
     projHTML+='</div>';
     projHTML+='<button class="btn-add-project" onclick="showProjectModal()">+ 新增子项目</button>';
@@ -1172,7 +1172,9 @@ function populateProcessSelect(){
 function populateProcessDates(){
   const pjId=$('processProject').value,keys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')).sort();
   const dates=keys.map(k=>k.replace(pjId+'_',''));const sel=$('processDate');sel.innerHTML=dates.map(d=>'<option value="'+d+'">'+d+'</option>').join('');
+  renderPeriodList();
   if(dates.length>0)renderProcess();
+  else{$('dispTable').innerHTML='<div class="empty-state">无数据</div>';$('settleTable').innerHTML='';$('alertInfo').innerHTML='';}
 }
 
 function renderProcess(){
@@ -1185,9 +1187,23 @@ function renderProcess(){
   else if(compare==='first'){const keys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')).sort();if(keys.length>0)compareDate=keys[0].replace(pjId+'_','');}
   else{compareDate=$('processCompareDate').value;}
 
-  // Show calc mode info
   const calcModeInfo=records.length>0&&records[0].calcMode ? (' ('+(records[0].calcMode==='chainage'?'桩号法':'偏距法')+')') : '';
 
+  if(isEditing&&editingDate===date){
+    // EDIT MODE: render input fields
+    let dispHTML='<table><thead><tr><th>测点</th><th>本期位移'+calcModeInfo+'</th><th>累计位移</th><th>本期沉降</th><th>累计沉降</th><th>间隔天数</th></tr></thead><tbody>';
+    let settleHTML='';
+    records.forEach(function(r,idx){
+      dispHTML+='<tr><td><input type="text" value="'+r.point+'" style="width:80px" data-field="point"></td><td><input type="number" step="0.01" value="'+(r.disp||0)+'" style="width:80px" data-field="disp"></td><td><input type="number" step="0.01" value="'+(r.cumDisp||0)+'" style="width:80px" data-field="cumDisp"></td><td><input type="number" step="0.01" value="'+(r.settle||0)+'" style="width:80px" data-field="settle"></td><td><input type="number" step="0.01" value="'+(r.cumSettle||0)+'" style="width:80px" data-field="cumSettle"></td><td><input type="number" step="1" value="'+(r.interval||0)+'" style="width:60px" data-field="interval"></td></tr>';
+    });
+    dispHTML+='</tbody></table>';
+    $('dispTable').innerHTML=dispHTML;
+    $('settleTable').innerHTML='';
+    $('alertInfo').innerHTML='<span style="color:var(--primary)">编辑模式：修改数值后点击「保存修改」</span>';
+    return;
+  }
+
+  // Normal view mode
   let dispHTML='<table><thead><tr><th>测点</th><th>本期位移'+calcModeInfo+'</th><th>累计位移</th>';
   if(compareDate&&compareDate!==date)dispHTML+='<th>对比期位移</th><th>变化量</th>';
   dispHTML+='<th>速率(mm/d)</th><th>预警</th></tr></thead><tbody>';
@@ -1214,6 +1230,83 @@ function renderProcess(){
   $('alertInfo').innerHTML=alerts.length>0?alerts.map(a=>'<span class="badge badge-'+(a.level==='red'?'red':'orange')+'">'+a.point+': '+a.type+'='+a.value+'mm ('+a.level+')</span> ').join(''):'<span class="badge badge-green">全部正常</span>';
   populateInclinoHoles();renderTrendChart();
   renderInclinoMatrix();renderConvergenceProcess();
+}
+
+// ==================== PERIOD MANAGEMENT ====================
+var isEditing=false,editingDate=null;
+
+function renderPeriodList(){
+  var pjId=$('processProject').value;if(!pjId){$('periodList').innerHTML='';return;}
+  var keys=Object.keys(appData.measurements||{}).filter(function(k){return k.startsWith(pjId+'_');}).sort().reverse();
+  if(keys.length===0){$('periodList').innerHTML='<div class="empty-state">暂无导入的期次数据</div>';return;}
+  var html='<table><thead><tr><th>期次日期</th><th>监测点数</th><th style="width:120px">操作</th></tr></thead><tbody>';
+  keys.forEach(function(k){
+    var date=k.replace(pjId+'_','');
+    var count=(appData.measurements[k]||[]).length;
+    html+='<tr><td><a href="javascript:void(0)" style="color:var(--primary);text-decoration:none;font-weight:bold" onclick="loadPeriod(\''+date+'\')">'+date+'</a></td><td>'+count+' 个测点</td><td><button class="btn btn-xs btn-outline" onclick="editPeriod(\''+date+'\')" style="margin-right:4px">编辑</button><button class="btn btn-xs btn-outline" style="color:var(--danger);border-color:var(--danger)" onclick="deletePeriod(\''+date+'\')">删除</button></td></tr>';
+  });
+  html+='</tbody></table>';
+  $('periodList').innerHTML=html;
+}
+
+function loadPeriod(date){
+  isEditing=false;editingDate=null;
+  $('processDate').value=date;
+  $('editModeBar').style.display='none';
+  renderProcess();
+}
+
+function editPeriod(date){
+  isEditing=true;editingDate=date;
+  $('processDate').value=date;
+  renderProcess();
+  // Show edit bar with save/cancel
+  $('editModeBar').style.display='block';
+}
+
+function saveEditedPeriod(){
+  if(!isEditing||!editingDate)return;
+  var pjId=$('processProject').value;
+  var key=pjId+'_'+editingDate;
+  var records=appData.measurements[key]||[];
+  // Collect from input fields
+  var updated=[];
+  var rows=document.querySelectorAll('#dispTable tbody tr');
+  var settleRows=document.querySelectorAll('#settleTable tbody tr');
+  rows.forEach(function(row,idx){
+    var inputs=row.querySelectorAll('input');
+    var rec=idx<records.length?Object.assign({},records[idx]):{point:'',disp:0,cumDisp:0,settle:0,cumSettle:0,interval:0};
+    if(inputs[0])rec.point=inputs[0].value;
+    if(inputs[1])rec.disp=parseFloat(inputs[1].value)||0;
+    if(inputs[2])rec.cumDisp=parseFloat(inputs[2].value)||0;
+    if(inputs[3])rec.settle=parseFloat(inputs[3].value)||0;
+    if(inputs[4])rec.cumSettle=parseFloat(inputs[4].value)||0;
+    if(inputs[5])rec.interval=parseFloat(inputs[5].value)||0;
+    updated.push(rec);
+  });
+  appData.measurements[key]=updated;
+  saveData();
+  isEditing=false;editingDate=null;
+  $('editModeBar').style.display='none';
+  renderPeriodList();
+  renderProcess();
+}
+
+function cancelEdit(){
+  isEditing=false;editingDate=null;
+  $('editModeBar').style.display='none';
+  renderProcess();
+}
+
+function deletePeriod(date){
+  if(!confirm('确定删除 '+date+' 的全部监测数据？此操作不可恢复。'))return;
+  var pjId=$('processProject').value;
+  var key=pjId+'_'+date;
+  delete appData.measurements[key];
+  saveData();
+  renderPeriodList();
+  $('processDate').value='';
+  renderProcess();
 }
 
 // ==================== INCLINOMETER ====================
