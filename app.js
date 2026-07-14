@@ -1273,30 +1273,40 @@ function editPeriod(date){
 }
 
 function saveEditedPeriod(){
-  if(!isEditing||!editingDate)return;
-  var pjId=$('processProject').value;
-  var key=pjId+'_'+editingDate;
-  var records=appData.measurements[key]||[];
-  var updated=[];
-  var rows=document.querySelectorAll('#dispTable tbody tr');
-  rows.forEach(function(row,idx){
-    var inputs=row.querySelectorAll('input');
-    if(inputs.length===0)return;
-    var rec=idx<records.length?Object.assign({},records[idx]):{point:'',disp:0,cumDisp:0,settle:0,cumSettle:0,interval:0};
-    inputs.forEach(function(inp){
-      var field=inp.getAttribute('data-field');
-      if(!field)return;
-      if(field==='point')rec[field]=inp.value;
-      else rec[field]=parseFloat(inp.value)||0;
+  try{
+    if(!isEditing||!editingDate)return;
+    var pjId=$('processProject').value;
+    var key=pjId+'_'+editingDate;
+    var origRecords=appData.measurements[key]||[];
+    console.log('saveEditedPeriod: key='+key+' origCount='+origRecords.length);
+    var updated=[];
+    var rows=document.querySelectorAll('#dispTable tbody tr');
+    rows.forEach(function(row,idx){
+      var inputs=row.querySelectorAll('input');
+      if(inputs.length===0)return;
+      var rec=idx<origRecords.length?Object.assign({},origRecords[idx]):{point:'',disp:0,cumDisp:0,settle:0,cumSettle:0,interval:0};
+      inputs.forEach(function(inp){
+        var field=inp.getAttribute('data-field');
+        if(!field)return;
+        if(field==='point')rec[field]=inp.value;
+        else rec[field]=parseFloat(inp.value)||0;
+      });
+      updated.push(rec);
     });
-    updated.push(rec);
-  });
-  if(updated.length===0)return;
-  appData.measurements[key]=updated;
-  saveData(appData);
-  isEditing=false;editingDate=null;
-  $('editModeBar').style.display='none';
-  populateProcessDates();
+    if(updated.length===0){toast('没有读取到编辑数据','error');return;}
+    console.log('saveEditedPeriod: updatedCount='+updated.length+' first='+updated[0].point+' disp='+updated[0].disp);
+    appData.measurements[key]=updated;
+    console.log('saveEditedPeriod: before saveData, key exists='+!!appData.measurements[key]+' len='+appData.measurements[key].length);
+    saveData(appData);
+    isEditing=false;editingDate=null;
+    $('editModeBar').style.display='none';
+    populateProcessDates();
+    console.log('saveEditedPeriod: done, rendering complete');
+    toast('已保存 '+updated.length+' 条记录','success');
+  }catch(e){
+    console.error('saveEditedPeriod ERROR:',e);
+    toast('保存失败: '+e.message,'error');
+  }
 }
 
 function cancelEdit(){
