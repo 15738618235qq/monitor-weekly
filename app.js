@@ -1780,8 +1780,11 @@ function generateReport(){
               children:[new P({alignment:AT.CENTER,spacing:{before:20,after:20},children:[new TR({text:tableHeaders[i].replace(/\\n/g,''),bold:true,size:16,font:'宋体'})]})]}));
             const allRows=[new TableRow({children:hcells,tableHeader:true})];
 
-            // Skip header-type row (index 0, point name is "监测点号" with all NaN values)
-            const tableRecords=records.slice(0,80).filter((r,i)=>i!==0);
+            // Only skip the first row if it's a header placeholder (point name = "监测点号")
+            const tableRecords=records.slice(0,80).filter((r,i)=>{
+              if(i===0 && r.point==='监测点号') return false;
+              return true;
+            });
 
             // Pre-compute all numeric values per column for abs-max detection
             const numCols=[2,3,4,5,6,7]; // indices in cellDefs
