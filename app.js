@@ -694,7 +694,7 @@ function switchPanel(panelName){
   document.querySelectorAll('.sidebar-item').forEach(item=>item.classList.remove('active'));
   const item=document.querySelector('[data-panel="'+panelName+'"]');if(item)item.classList.add('active');
   const breadcrumbs={dashboard:'项目总览',baseline:'基线配置',import:'数据导入',process:'数据处理',history:'历史管理',report:'报告生成',share:'分享与导入',versions:'版本历史',account:'账户管理',sync:'云同步设置'};
-  $('breadcrumb').textContent=breadcrumbs[panelName]||panelName;
+  const bc=$('breadcrumb');if(bc)bc.textContent=breadcrumbs[panelName]||panelName;
   if(panelName==='dashboard')renderOverview();
   if(panelName==='baseline'){populateBaselineSelect();loadBaselineType();}
   if(panelName==='import'){populateImportSelect();showImportHint();onFormatChange();}
