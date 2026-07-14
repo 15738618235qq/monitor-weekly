@@ -970,7 +970,7 @@ function showImportHint(){
 }
 
 function importData(){
-  const pjId=$('importProject').value,date=$('importDate').value,fmt=$('importFormat').value;
+  const pjId=$('importProject').value,date=$('importDate').value,fmt=$('importFormat').value,isCum=$('importCumulative').checked;
   // For format H from Excel, use matrixData from dataset
   var raw;
   if(fmt==='H'){
