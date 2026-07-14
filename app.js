@@ -1025,11 +1025,18 @@ function importData(){
         const result=calcDisplacement(ix,iy,iz,cx,cy,cz,bl,calcMode);
         let cumDisp=result.dDisp,cumSettle=result.settle;
         if(isCum){
-          const prevKeys=Object.keys(appData.measurements||{}).filter(k=>k.startsWith(pjId+'_')&&k!==key).sort();
+          var prevKeys=Object.keys(appData.measurements||{}).filter(function(k){return k.startsWith(pjId+'_')&&k!==key;}).sort();
           if(prevKeys.length>0){
-            const prevRecords=appData.measurements[prevKeys[prevKeys.length-1]];
-            const prev=prevRecords.find(r=>r.point===parts[0]);
+            var prevRecords=appData.measurements[prevKeys[prevKeys.length-1]];
+            var prev=prevRecords.find(function(r){return r.point===parts[0];});
             if(prev){cumDisp=parseFloat((prev.cumDisp+result.dDisp).toFixed(2));cumSettle=parseFloat(((prev.cumSettle!=null?prev.cumSettle+result.settle:result.settle)).toFixed(2));}
+            else{
+              var hb=getLatestHistCum(pjId,parts[0]);
+              if(hb){cumDisp=parseFloat((hb.cumDisp+result.dDisp).toFixed(2));cumSettle=hb.cumSettle!=null?parseFloat((hb.cumSettle+result.settle).toFixed(2)):result.settle;}
+            }
+          }else{
+            var hb=getLatestHistCum(pjId,parts[0]);
+            if(hb){cumDisp=parseFloat((hb.cumDisp+result.dDisp).toFixed(2));cumSettle=hb.cumSettle!=null?parseFloat((hb.cumSettle+result.settle).toFixed(2)):result.settle;}
           }
         }
         records.push({point:parts[0],ix,iy,iz,cx,cy,cz,dInit:result.dInit,dCurr:result.dCurr,disp:result.dDisp,settle:result.settle,cumDisp,cumSettle,calcMode});
@@ -1437,17 +1444,101 @@ function renderTrendChart(){
 function populateHistorySelect(){const sel=$('histProject');sel.innerHTML=(appData.projects||[]).map(p=>'<option value="'+p.id+'">['+p.group+'] '+p.name+'</option>').join('');}
 function renderHistPanel(){
   const pjId=$('histProject').value,hist=appData.historyCumData[pjId]||{};$('histDate').value=formatDate(new Date());
-  let html='';Object.keys(hist).sort().forEach(point=>{(hist[point]||[]).forEach(e=>{html+='<tr><td>'+point+'</td><td>'+e.date+'</td><td>'+e.cumDisp+'</td><td>'+(e.cumSettle||'-')+'</td><td><button class="btn btn-sm btn-danger" onclick="deleteHistRecord(\''+pjId+'\',\''+point+'\',\''+e.date+'\')">删除</button></td></tr>';});});
+  let html='';Object.keys(hist).sort().forEach(point=>{(hist[point]||[]).forEach(e=>{html+='<tr><td>'+point+'</td><td>'+e.date+'</td><td>'+e.cumDisp+'</td><td>'+(e.cumSettle!=null?e.cumSettle:'-')+'</td><td><button class="btn btn-sm" style="background:#E8F1FB;color:var(--primary);margin-right:4px" onclick="editHistRecord(\''+pjId+'\',\''+point+'\',\''+e.date+'\')">编辑</button><button class="btn btn-sm btn-danger" onclick="deleteHistRecord(\''+pjId+'\',\''+point+'\',\''+e.date+'\')">删除</button></td></tr>';});});
   $('histTable').querySelector('tbody').innerHTML=html||'<tr><td colspan="5" style="text-align:center;color:#999">暂无历史累计数据</td></tr>';
 }
-function addHistRecord(){
-  const pjId=$('histProject').value,point=$('histPoint').value.trim(),date=$('histDate').value,cumDisp=parseFloat($('histCumDisp').value),cumSettle=parseFloat($('histCumSettle').value);
-  if(!pjId||!point||!date||isNaN(cumDisp)){toast('请填写完整信息','error');return;}
-  if(!appData.historyCumData)appData.historyCumData={};if(!appData.historyCumData[pjId])appData.historyCumData[pjId]={};
-  if(!appData.historyCumData[pjId][point])appData.historyCumData[pjId][point]=[];
-  appData.historyCumData[pjId][point].push({date,cumDisp,cumSettle:isNaN(cumSettle)?null:cumSettle});
-  saveData(appData);renderHistPanel();toast('历史记录已添加','success');addOperationLog('历史数据','添加 '+point+' 历史记录');
+var histEditState={pjId:null,point:null,date:null};
+
+function downloadHistTemplate(){
+  var ws_data=[['测点编号','日期','累计位移(mm)','累计沉降(mm)'],['CN3','2025-01-15',12.35,-5.20]];
+  var ws=XLSX.utils.aoa_to_sheet(ws_data);
+  ws['!cols']=[{wch:12},{wch:14},{wch:16},{wch:16}];
+  var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'历史累计数据导入模板');
+  XLSX.writeFile(wb,'历史累计数据导入模板.xlsx');
 }
+
+function getLatestHistCum(pjId,point){
+  if(!appData.historyCumData||!appData.historyCumData[pjId]||!appData.historyCumData[pjId][point])return null;
+  var entries=appData.historyCumData[pjId][point];
+  if(entries.length===0)return null;
+  var latest=entries.reduce(function(a,b){return a.date>b.date?a:b;});
+  return {cumDisp:latest.cumDisp||0,cumSettle:latest.cumSettle||0};
+}
+
+function handleHistExcel(){
+  var file=$('histExcel').files[0];if(!file)return;
+  var reader=new FileReader();
+  reader.onload=function(e){
+    try{
+      var wb=XLSX.read(e.target.result,{type:'array'});
+      var ws=wb.Sheets[wb.SheetNames[0]];
+      var data=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
+      var pjId=$('histProject').value;
+      if(!pjId){toast('请先选择子项目','error');return;}
+
+      var headerRow=-1, colMap={};
+      for(var i=0;i<Math.min(5,data.length);i++){
+        var row=data[i];
+        var hasPoint=row.some(function(c){var s=String(c).trim();return s.includes('测点')||s.includes('编号')||s==='点名';});
+        var hasDate=row.some(function(c){return String(c).includes('日期');});
+        if(hasPoint&&hasDate){headerRow=i;break;}
+      }
+
+      if(headerRow>=0){
+        var hRow=data[headerRow];
+        for(var c=0;c<hRow.length;c++){
+          var h=String(hRow[c]).trim();
+          if(h.includes('测点')||h.includes('点名')||h.includes('编号'))colMap.point=c;
+          else if(h.includes('日期'))colMap.date=c;
+          else if(h.includes('位移')||h.includes('disp'))colMap.cumDisp=c;
+          else if(h.includes('沉降')||h.includes('settle'))colMap.cumSettle=c;
+        }
+      }
+
+      if(!colMap.point&&data.length>0&&data[0].length>=3){
+        colMap.point=0;colMap.date=1;
+        if(data[0].length>=4){colMap.cumDisp=2;colMap.cumSettle=3;}
+        else{colMap.cumDisp=2;}
+        headerRow=0;
+      }
+
+      if(colMap.point==null||colMap.date==null||colMap.cumDisp==null&&colMap.cumSettle==null){
+        toast('无法识别Excel格式，请使用下载模板','error');return;
+      }
+
+      var count=0,startRow=headerRow>=0?headerRow+1:0;
+      if(!appData.historyCumData)appData.historyCumData={};
+      if(!appData.historyCumData[pjId])appData.historyCumData[pjId]={};
+
+      for(var r=startRow;r<data.length;r++){
+        var row=data[r];
+        var point=String(row[colMap.point]||'').trim();
+        var date=String(row[colMap.date]||'').trim();
+        if(!point||!date)continue;
+
+        var d=new Date(date);
+        if(!isNaN(d.getTime()))date=formatDate(d);
+
+        var cumDisp=colMap.cumDisp!=null?parseFloat(row[colMap.cumDisp]):null;
+        var cumSettle=colMap.cumSettle!=null?parseFloat(row[colMap.cumSettle]):null;
+        if(isNaN(cumDisp)&&isNaN(cumSettle))continue;
+
+        if(!appData.historyCumData[pjId][point])appData.historyCumData[pjId][point]=[];
+        var existing=appData.historyCumData[pjId][point].findIndex(function(e){return e.date===date;});
+        var entry={date:date,cumDisp:isNaN(cumDisp)?null:cumDisp,cumSettle:isNaN(cumSettle)?null:cumSettle};
+        if(existing>=0)appData.historyCumData[pjId][point][existing]=entry;
+        else appData.historyCumData[pjId][point].push(entry);
+        count++;
+      }
+
+      saveData(appData);renderHistPanel();
+      toast('从Excel导入 '+count+' 条历史记录','success');
+      addOperationLog('历史数据','Excel导入 '+count+' 条');
+    }catch(err){toast('Excel解析失败: '+err.message,'error');}
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 function deleteHistRecord(pjId,point,date){
   if(!confirm('确定删除 '+point+' '+date+' 的历史记录？'))return;
   if(!appData.historyCumData[pjId])return;
@@ -1455,9 +1546,47 @@ function deleteHistRecord(pjId,point,date){
   if(appData.historyCumData[pjId][point].length===0)delete appData.historyCumData[pjId][point];
   saveData(appData);renderHistPanel();toast('已删除','info');
 }
-function handleHistExcel(){
-  const file=$('histExcel').files[0];if(!file)return;const reader=new FileReader();
-  reader.onload=function(e){try{const wb=XLSX.read(e.target.result,{type:'array'});const ws=wb.Sheets[wb.SheetNames[0]];const data=XLSX.utils.sheet_to_json(ws,{header:1});const pjId=$('histProject').value;let count=0;data.forEach((row,i)=>{if(i===0||row.length<3)return;const point=String(row[0]).trim(),date=String(row[1]).trim(),cumDisp=parseFloat(row[2]);if(!point||!date||isNaN(cumDisp))return;if(!appData.historyCumData)appData.historyCumData={};if(!appData.historyCumData[pjId])appData.historyCumData[pjId]={};if(!appData.historyCumData[pjId][point])appData.historyCumData[pjId][point]=[];appData.historyCumData[pjId][point].push({date,cumDisp,cumSettle:row[3]!=null?parseFloat(row[3]):null});count++;});saveData(appData);renderHistPanel();toast('从Excel导入 '+count+' 条历史记录','success');addOperationLog('历史数据','Excel导入 '+count+' 条');}catch(err){toast('Excel解析失败: '+err.message,'error');}};reader.readAsArrayBuffer(file);
+
+function editHistRecord(pjId,point,date){
+  var entries=appData.historyCumData[pjId]&&appData.historyCumData[pjId][point]||[];
+  var entry=entries.find(function(e){return e.date===date;});
+  if(!entry)return;
+  $('histPoint').value=point;$('histDate').value=date;
+  $('histCumDisp').value=entry.cumDisp!=null?entry.cumDisp:'';
+  $('histCumSettle').value=entry.cumSettle!=null?entry.cumSettle:'';
+  histEditState={pjId:pjId,point:point,date:date};
+  $('histEditBar').style.display='block';
+  $('histEditTarget').textContent=point+' '+date;
+  document.querySelector('#history .card .btn-primary').textContent='更新记录';
+  document.querySelector('#history .card .btn-primary').style.background='var(--warning)';
+  scrollToElement($('histPoint'));
+}
+
+function cancelHistEdit(){
+  histEditState={pjId:null,point:null,date:null};
+  $('histEditBar').style.display='none';
+  $('histPoint').value='';$('histDate').value=formatDate(new Date());
+  $('histCumDisp').value='';$('histCumSettle').value='';
+  var addBtn=document.querySelector('#history .card .btn-primary');
+  addBtn.textContent='添加记录';addBtn.style.background='';
+}
+
+function saveHistRecord(){
+  var pjId=$('histProject').value,point=$('histPoint').value.trim(),date=$('histDate').value,cumDisp=parseFloat($('histCumDisp').value),cumSettle=parseFloat($('histCumSettle').value);
+  if(!pjId||!point||!date||isNaN(cumDisp)){toast('请填写完整信息','error');return;}
+  if(!appData.historyCumData)appData.historyCumData={};
+  if(!appData.historyCumData[pjId])appData.historyCumData[pjId]={};
+  if(!appData.historyCumData[pjId][point])appData.historyCumData[pjId][point]=[];
+
+  if(histEditState.pjId&&histEditState.point&&histEditState.date){
+    appData.historyCumData[histEditState.pjId][histEditState.point]=appData.historyCumData[histEditState.pjId][histEditState.point].filter(function(e){return e.date!==histEditState.date;});
+    if(appData.historyCumData[histEditState.pjId][histEditState.point].length===0)delete appData.historyCumData[histEditState.pjId][histEditState.point];
+  }
+
+  appData.historyCumData[pjId][point].push({date:date,cumDisp:cumDisp,cumSettle:isNaN(cumSettle)?null:cumSettle});
+  saveData(appData);renderHistPanel();cancelHistEdit();
+  toast(histEditState.pjId?'记录已更新':'历史记录已添加','success');
+  addOperationLog('历史数据',(histEditState.pjId?'更新':'添加')+' '+point+' 历史记录');
 }
 
 // ==================== REPORT ====================

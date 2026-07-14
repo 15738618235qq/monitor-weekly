@@ -521,9 +521,14 @@ textarea{resize:vertical;min-height:60px}
 <div class="form-group"><label>累计位移(mm)</label><input type="number" id="histCumDisp" step="any"></div>
 <div class="form-group"><label>累计沉降(mm)</label><input type="number" id="histCumSettle" step="any"></div>
 </div>
-<button class="btn btn-primary" onclick="addHistRecord()">添加记录</button>
+<button class="btn btn-primary" onclick="saveHistRecord()">添加记录</button>
+<button class="btn btn-outline" onclick="downloadHistTemplate()" style="margin-right:6px">下载导入模板</button>
 <button class="btn btn-outline" onclick="document.getElementById('histExcel').click()">从Excel导入</button>
 <input type="file" id="histExcel" accept=".xlsx,.xls" style="display:none" onchange="handleHistExcel()">
+<div id="histEditBar" style="display:none;margin-top:8px;padding:6px 10px;background:#FFF3E0;border-radius:4px;font-size:12px">
+  正在编辑 <span id="histEditTarget" style="font-weight:600"></span> 的记录
+  <button class="btn btn-sm btn-danger" onclick="cancelHistEdit()" style="margin-left:10px">取消编辑</button>
+</div>
 <div class="table-container" style="margin-top:14px"><table id="histTable"><thead><tr><th>测点</th><th>日期</th><th>累计位移</th><th>累计沉降</th><th>操作</th></tr></thead><tbody></tbody></table></div>
 </div>
 </div>
