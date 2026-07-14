@@ -349,6 +349,7 @@ async function flushPendingSync(){
 }
 
 function loadSyncConfig(){
+  localStorage.removeItem(SYNC_CONFIG_KEY);
   var ue=document.getElementById('syncUrl');
   var ke=document.getElementById('syncKey');
   if(ue)ue.value=SUPABASE_URL;
