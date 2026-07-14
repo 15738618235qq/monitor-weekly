@@ -25,8 +25,8 @@ function initSupabase(){
   }
   try{
     const config=JSON.parse(localStorage.getItem(SYNC_CONFIG_KEY)||'{}');
-    const url=config.url||SUPABASE_URL;
-    const key=config.key||SUPABASE_ANON_KEY;
+    const url=SUPABASE_URL;
+    const key=SUPABASE_ANON_KEY;
     if(url.includes('YOUR_PROJECT')||key.includes('YOUR_ANON_KEY')){
       supabase=null;supabaseConnected=false;updateSyncUI();return;
     }
@@ -349,11 +349,10 @@ async function flushPendingSync(){
 }
 
 function loadSyncConfig(){
-  var c=JSON.parse(localStorage.getItem(SYNC_CONFIG_KEY)||'{}');
   var ue=document.getElementById('syncUrl');
   var ke=document.getElementById('syncKey');
-  if(ue)ue.value=c.url||SUPABASE_URL;
-  if(ke)ke.value=c.key||SUPABASE_ANON_KEY;
+  if(ue)ue.value=SUPABASE_URL;
+  if(ke)ke.value=SUPABASE_ANON_KEY;
 }
 
 // Full monitoring projects extracted from 73rd monthly report
