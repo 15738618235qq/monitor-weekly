@@ -30,9 +30,24 @@ function initSupabase(){
     if(url.includes('YOUR_PROJECT')||key.includes('YOUR_ANON_KEY')){
       supabase=null;supabaseConnected=false;updateSyncUI();return;
     }
-    supabase=window.supabase.createClient(url,key,{realtime:{params:{eventsPerSecond:10}}});
+    supabase=window.supabase.createClient(url,key,{
+      auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:false},
+      realtime:{params:{eventsPerSecond:10}}
+    });
     supabaseConnected=true;
     updateSyncUI();
+    // 监听认证状态变化，实现登录持久化
+    supabase.auth.onAuthStateChange(function(event,session){
+      console.log('[Supabase] Auth state:',event,session?session.user?.email:'no session');
+      if(session){cloudUser=session.user;supabaseConnected=true;}
+      else if(event==='SIGNED_OUT'){cloudUser=null;}
+      updateSyncUI();
+      // INITIAL_SESSION 表示页面刷新后从 localStorage 恢复了会话
+      if(event==='SIGNED_IN'||event==='INITIAL_SESSION'){
+        addOperationLog('云同步','已恢复云端会话');
+        setTimeout(function(){syncFromCloud();},500);
+      }
+    });
     loadCloudUser();
     startRealtimeSubscription();
     setInterval(pollRealTime,5000);
@@ -974,7 +989,6 @@ function showImportHint(){
   };
   $('importHint').innerHTML=hints[fmt]||'';
   $('importData').placeholder=placeholders[fmt]||'';
-  onFormatChange();
 }
 
 function importData(){
