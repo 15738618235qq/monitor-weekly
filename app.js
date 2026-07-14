@@ -1445,15 +1445,15 @@ function renderTrendChart(){
 function populateHistorySelect(){const sel=$('histProject');sel.innerHTML=(appData.projects||[]).map(p=>'<option value="'+p.id+'">['+p.group+'] '+p.name+'</option>').join('');}
 function renderHistPanel(){
   const pjId=$('histProject').value,hist=appData.historyCumData[pjId]||{};$('histDate').value=formatDate(new Date());
-  let html='';Object.keys(hist).sort().forEach(point=>{(hist[point]||[]).forEach(e=>{html+='<tr><td>'+point+'</td><td>'+e.date+'</td><td>'+e.cumDisp+'</td><td>'+(e.cumSettle!=null?e.cumSettle:'-')+'</td><td><button class="btn btn-sm" style="background:#E8F1FB;color:var(--primary);margin-right:4px" onclick="editHistRecord(\''+pjId+'\',\''+point+'\',\''+e.date+'\')">编辑</button><button class="btn btn-sm btn-danger" onclick="deleteHistRecord(\''+pjId+'\',\''+point+'\',\''+e.date+'\')">删除</button></td></tr>';});});
+  let html='';Object.keys(hist).sort().forEach(point=>{(hist[point]||[]).forEach(e=>{html+='<tr><td>'+point+'</td><td>'+e.date+'</td><td>'+(e.cumDisp!=null?e.cumDisp.toFixed(3):'-')+'</td><td>'+(e.cumSettle!=null?e.cumSettle.toFixed(3):'-')+'</td><td><button class="btn btn-sm" style="background:#E8F1FB;color:var(--primary);margin-right:4px" onclick="editHistRecord(\''+pjId+'\',\''+point+'\',\''+e.date+'\')">编辑</button><button class="btn btn-sm btn-danger" onclick="deleteHistRecord(\''+pjId+'\',\''+point+'\',\''+e.date+'\')">删除</button></td></tr>';});});
   $('histTable').querySelector('tbody').innerHTML=html||'<tr><td colspan="5" style="text-align:center;color:#999">暂无历史累计数据</td></tr>';
 }
 var histEditState={pjId:null,point:null,date:null};
 
 function downloadHistTemplate(){
-  var ws_data=[['测点编号','日期','累计位移(mm)','累计沉降(mm)'],['CN3','2025-01-15',12.35,-5.20]];
+  var ws_data=[['测点编号','累计位移(mm)','累计沉降(mm)'],['CN3',12.35,-5.20]];
   var ws=XLSX.utils.aoa_to_sheet(ws_data);
-  ws['!cols']=[{wch:12},{wch:14},{wch:16},{wch:16}];
+  ws['!cols']=[{wch:12},{wch:16},{wch:16}];
   var wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'历史累计数据导入模板');
   XLSX.writeFile(wb,'历史累计数据导入模板.xlsx');
 }
@@ -1481,8 +1481,9 @@ function handleHistExcel(){
       for(var i=0;i<Math.min(5,data.length);i++){
         var row=data[i];
         var hasPoint=row.some(function(c){var s=String(c).trim();return s.includes('测点')||s.includes('编号')||s==='点名';});
-        var hasDate=row.some(function(c){return String(c).includes('日期');});
-        if(hasPoint&&hasDate){headerRow=i;break;}
+        var hasDisp=row.some(function(c){return String(c).includes('位移');});
+        var hasSettle=row.some(function(c){return String(c).includes('沉降');});
+        if(hasPoint&&(hasDisp||hasSettle)){headerRow=i;break;}
       }
 
       if(headerRow>=0){
@@ -1496,14 +1497,14 @@ function handleHistExcel(){
         }
       }
 
-      if(!colMap.point&&data.length>0&&data[0].length>=3){
-        colMap.point=0;colMap.date=1;
-        if(data[0].length>=4){colMap.cumDisp=2;colMap.cumSettle=3;}
-        else{colMap.cumDisp=2;}
+      if(colMap.point==null&&data.length>0&&data[0].length>=3){
+        colMap.point=0;
+        if(data[0].length>=4){colMap.date=1;colMap.cumDisp=2;colMap.cumSettle=3;}
+        else{colMap.cumDisp=1;colMap.cumSettle=2;}
         headerRow=0;
       }
 
-      if(colMap.point==null||colMap.date==null||colMap.cumDisp==null&&colMap.cumSettle==null){
+      if(colMap.point==null||(colMap.cumDisp==null&&colMap.cumSettle==null)){
         toast('无法识别Excel格式，请使用下载模板','error');return;
       }
 
@@ -1514,14 +1515,18 @@ function handleHistExcel(){
       for(var r=startRow;r<data.length;r++){
         var row=data[r];
         var point=String(row[colMap.point]||'').trim();
-        var date=String(row[colMap.date]||'').trim();
+        var date;
+        if(colMap.date!=null){
+          date=String(row[colMap.date]||'').trim();
+          var d=new Date(date);
+          if(!isNaN(d.getTime()))date=formatDate(d);
+        }else{
+          date=$('histDate').value;
+        }
         if(!point||!date)continue;
 
-        var d=new Date(date);
-        if(!isNaN(d.getTime()))date=formatDate(d);
-
-        var cumDisp=colMap.cumDisp!=null?parseFloat(row[colMap.cumDisp]):null;
-        var cumSettle=colMap.cumSettle!=null?parseFloat(row[colMap.cumSettle]):null;
+        var cumDisp=colMap.cumDisp!=null?parseFloat(parseFloat(row[colMap.cumDisp]||0).toFixed(3)):null;
+        var cumSettle=colMap.cumSettle!=null?parseFloat(parseFloat(row[colMap.cumSettle]||0).toFixed(3)):null;
         if(isNaN(cumDisp)&&isNaN(cumSettle))continue;
 
         if(!appData.historyCumData[pjId][point])appData.historyCumData[pjId][point]=[];
@@ -1573,7 +1578,7 @@ function cancelHistEdit(){
 }
 
 function saveHistRecord(){
-  var pjId=$('histProject').value,point=$('histPoint').value.trim(),date=$('histDate').value,cumDisp=parseFloat($('histCumDisp').value),cumSettle=parseFloat($('histCumSettle').value);
+  var pjId=$('histProject').value,point=$('histPoint').value.trim(),date=$('histDate').value,cumDisp=parseFloat(parseFloat($('histCumDisp').value||0).toFixed(3)),cumSettle=parseFloat(parseFloat($('histCumSettle').value||0).toFixed(3));
   if(!pjId||!point||!date||isNaN(cumDisp)){toast('请填写完整信息','error');return;}
   if(!appData.historyCumData)appData.historyCumData={};
 
