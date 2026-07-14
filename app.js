@@ -690,7 +690,7 @@ function switchPanel(panelName){
   if(panelName==='dashboard')renderOverview();
   if(panelName==='baseline'){populateBaselineSelect();loadBaselineType();}
   if(panelName==='import'){populateImportSelect();showImportHint();onFormatChange();}
-  if(panelName==='process'){populateProcessSelect();renderProcess();}
+  if(panelName==='process'){populateProcessSelect();if(window._pendingProcessProject){$('processProject').value=window._pendingProcessProject;window._pendingProcessProject=null;populateProcessDates();}}
   if(panelName==='history'){populateHistorySelect();renderHistPanel();}
   if(panelName==='report'){populateReportSelect();}
   if(panelName==='share')populateShareSelect();
@@ -743,7 +743,7 @@ function renderOverview(){
       if(incKeys.length>0)tagHTML+='<span class="tag" style="background:#8B2252;color:#fff">测斜矩阵</span>';
       if(convKeys.length>0)tagHTML+='<span class="tag" style="background:#6B8E23;color:#fff">收敛</span>';
       if(mKeys.length===0&&aKeys.length===0&&bKeys.length===0&&iKeys.length===0&&incKeys.length===0&&convKeys.length===0)tagHTML+='<span class="tag neutral">暂无数据</span>';
-      projHTML+='<div class="project-card"><div class="card-actions"><button class="btn-icon primary" onclick="event.stopPropagation();showProjectModal(\''+p.id+'\')" title="编辑">&#9998;</button><button class="btn-icon danger" onclick="event.stopPropagation();deleteProject(\''+p.id+'\')" title="删除">&#10005;</button></div><h4>'+p.name+'</h4><div class="tags">'+tagHTML+'</div><div class="meta">'+p.desc+'</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="switchPanel(\'process\');$(\'processProject\').value=\''+p.id+'\';populateProcessDates();">查看数据</button><button class="btn btn-sm btn-outline" style="margin-left:4px" onclick="switchPanel(\'import\');$(\'importProject\').value=\''+p.id+'\';onFormatChange();">导入数据</button></div></div>';
+      projHTML+='<div class="project-card"><div class="card-actions"><button class="btn-icon primary" onclick="event.stopPropagation();showProjectModal(\''+p.id+'\')" title="编辑">&#9998;</button><button class="btn-icon danger" onclick="event.stopPropagation();deleteProject(\''+p.id+'\')" title="删除">&#10005;</button></div><h4>'+p.name+'</h4><div class="tags">'+tagHTML+'</div><div class="meta">'+p.desc+'</div><div style="margin-top:8px"><button class="btn btn-sm btn-outline" onclick="window._pendingProcessProject=\''+p.id+'\';switchPanel(\'process\');">查看数据</button><button class="btn btn-sm btn-outline" style="margin-left:4px" onclick="switchPanel(\'import\');$(\'importProject\').value=\''+p.id+'\';onFormatChange();">导入数据</button></div></div>';
     });
     projHTML+='</div>';
     projHTML+='<button class="btn-add-project" onclick="showProjectModal()">+ 新增子项目</button>';
@@ -1269,27 +1269,26 @@ function saveEditedPeriod(){
   var pjId=$('processProject').value;
   var key=pjId+'_'+editingDate;
   var records=appData.measurements[key]||[];
-  // Collect from input fields
   var updated=[];
   var rows=document.querySelectorAll('#dispTable tbody tr');
-  var settleRows=document.querySelectorAll('#settleTable tbody tr');
   rows.forEach(function(row,idx){
     var inputs=row.querySelectorAll('input');
+    if(inputs.length===0)return;
     var rec=idx<records.length?Object.assign({},records[idx]):{point:'',disp:0,cumDisp:0,settle:0,cumSettle:0,interval:0};
-    if(inputs[0])rec.point=inputs[0].value;
-    if(inputs[1])rec.disp=parseFloat(inputs[1].value)||0;
-    if(inputs[2])rec.cumDisp=parseFloat(inputs[2].value)||0;
-    if(inputs[3])rec.settle=parseFloat(inputs[3].value)||0;
-    if(inputs[4])rec.cumSettle=parseFloat(inputs[4].value)||0;
-    if(inputs[5])rec.interval=parseFloat(inputs[5].value)||0;
+    inputs.forEach(function(inp){
+      var field=inp.getAttribute('data-field');
+      if(!field)return;
+      if(field==='point')rec[field]=inp.value;
+      else rec[field]=parseFloat(inp.value)||0;
+    });
     updated.push(rec);
   });
+  if(updated.length===0)return;
   appData.measurements[key]=updated;
   saveData();
   isEditing=false;editingDate=null;
   $('editModeBar').style.display='none';
-  renderPeriodList();
-  renderProcess();
+  populateProcessDates();
 }
 
 function cancelEdit(){
