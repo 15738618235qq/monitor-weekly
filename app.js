@@ -1525,8 +1525,10 @@ function handleHistExcel(){
         }
         if(!point||!date)continue;
 
-        var cumDisp=colMap.cumDisp!=null?parseFloat(parseFloat(row[colMap.cumDisp]||0).toFixed(3)):null;
-        var cumSettle=colMap.cumSettle!=null?parseFloat(parseFloat(row[colMap.cumSettle]||0).toFixed(3)):null;
+        var cumDisp=colMap.cumDisp!=null?parseFloat(row[colMap.cumDisp]):null;
+        if(!isNaN(cumDisp))cumDisp=parseFloat(cumDisp.toFixed(3));
+        var cumSettle=colMap.cumSettle!=null?parseFloat(row[colMap.cumSettle]):null;
+        if(!isNaN(cumSettle))cumSettle=parseFloat(cumSettle.toFixed(3));
         if(isNaN(cumDisp)&&isNaN(cumSettle))continue;
 
         if(!appData.historyCumData[pjId][point])appData.historyCumData[pjId][point]=[];
@@ -1578,7 +1580,9 @@ function cancelHistEdit(){
 }
 
 function saveHistRecord(){
-  var pjId=$('histProject').value,point=$('histPoint').value.trim(),date=$('histDate').value,cumDisp=parseFloat(parseFloat($('histCumDisp').value||0).toFixed(3)),cumSettle=parseFloat(parseFloat($('histCumSettle').value||0).toFixed(3));
+  var pjId=$('histProject').value,point=$('histPoint').value.trim(),date=$('histDate').value,cumDisp=parseFloat($('histCumDisp').value),cumSettle=parseFloat($('histCumSettle').value);
+  if(!isNaN(cumDisp))cumDisp=parseFloat(cumDisp.toFixed(3));
+  if(!isNaN(cumSettle))cumSettle=parseFloat(cumSettle.toFixed(3));
   if(!pjId||!point||!date||isNaN(cumDisp)){toast('请填写完整信息','error');return;}
   if(!appData.historyCumData)appData.historyCumData={};
 
