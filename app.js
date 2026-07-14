@@ -319,6 +319,7 @@ async function manualSync(){
   renderOverview();populateAllSelects();
   toast('同步完成','success');
 }
+window.manualSync=manualSync;
 
 function saveSyncConfig(){
   var u=document.getElementById('syncUrl').value.trim();
@@ -342,6 +343,7 @@ async function testSupabaseConnection(){
     saveSyncConfig();
   }catch(e){toast('连接测试失败: '+e.message,'error');}
 }
+window.testSupabaseConnection=testSupabaseConnection;
 
 async function flushPendingSync(){
   if(!supabaseConnected||!cloudUser||pendingSyncQueue.length===0)return;
