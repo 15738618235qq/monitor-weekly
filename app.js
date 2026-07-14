@@ -434,9 +434,26 @@ const DEFAULT_THRESHOLDS={
 };
 
 const COLORS28=[
-  '#1F4E79','#8B2252','#6B8E23','#3A7D8C','#4A3872','#B87A3F','#4A7EB0','#993333',
-  '#A8C673','#7A6BC0','#408080','#E8A735','#4DA8B5','#5A92C1','#D4A0A0','#AEBC34',
-  '#5AB8E0','#E89A2A','#B0C4DE','#D6A0A0','#B8D0A8','#C0B8D0','#A8D8E8'
+  // W1-W15: WPS 折线图颜色映射（严格匹配示例样式）
+  '#2B5EA7', // W1 深蓝色
+  '#A0522D', // W2 深红棕色
+  '#556B2F', // W3 橄榄绿/草绿色
+  '#6A0DAD', // W4 深紫色
+  '#008080', // W5 青蓝色/Teal
+  '#DAA520', // W6 橙棕色
+  '#5DADE2', // W7 天蓝色
+  '#C0392B', // W8 暗红色
+  '#82E0AA', // W9 浅绿色
+  '#8E44AD', // W10 紫色
+  '#00CED1', // W11 亮青色
+  '#F39C12', // W12 橙色
+  '#A9CCE3', // W13 浅灰蓝色
+  '#F5B7B1', // W14 浅粉色
+  '#C5E17A', // W15 淡黄绿色
+  // 扩展色（循环复用 W1-W15 配色）
+  '#2B5EA7','#A0522D','#556B2F','#6A0DAD','#008080',
+  '#DAA520','#5DADE2','#C0392B','#82E0AA','#8E44AD',
+  '#00CED1','#F39C12','#A9CCE3'
 ];
 
 const AREA_COLORS={矿山:'#1a73e8','物流廊道':'#e37400','陆域堆场':'#7b1fa2',码头:'#137333'};
@@ -1801,7 +1818,47 @@ function computeMonthlyChange(pjId, latestDate){
   return result;
 }
 
-// Trend chart generator using hidden Canvas + Chart.js
+// Trend chart generator using hidden Canvas + Chart.js (WPS 1:1 style)
+const wpsChartPlugin={
+  id:'wpsChartStyle',
+  beforeDraw(chart){
+    const ctx=chart.ctx;
+    ctx.save();
+    ctx.fillStyle='#FFFFFF';
+    ctx.fillRect(0,0,chart.width,chart.height);
+    ctx.restore();
+  },
+  afterDraw(chart){
+    const ctx=chart.ctx,chartArea=chart.chartArea,ds=chart.data.datasets;
+    if(!ds||ds.length===0)return;
+    const itemsPerRow=8,boxSize=12,gap=3;
+    const itemWidth=boxSize+gap+20;
+    const rowHeight=15;
+    const rows=Math.ceil(ds.length/itemsPerRow);
+    const totalLegendH=rows*rowHeight;
+    const legendTop=chartArea.top-totalLegendH-2;
+    ctx.save();
+    ctx.font='9px Arial,sans-serif';
+    ctx.textBaseline='middle';
+    for(var r=0;r<rows;r++){
+      var start=r*itemsPerRow,end=Math.min(start+itemsPerRow,ds.length);
+      var rowItems=end-start,rowWidth=rowItems*itemWidth;
+      var x=chartArea.left+(chartArea.right-chartArea.left-rowWidth)/2;
+      var y=legendTop+r*rowHeight+rowHeight/2;
+      for(var i=start;i<end;i++){
+        ctx.fillStyle=ds[i].borderColor;
+        ctx.fillRect(x,y-boxSize/2,boxSize,boxSize);
+        x+=boxSize+gap;
+        ctx.fillStyle='#000000';
+        ctx.textAlign='left';
+        ctx.fillText(ds[i].label,x,y);
+        x+=itemWidth-boxSize-gap;
+      }
+    }
+    ctx.restore();
+  }
+};
+
 async function generateTrendChart(pjId,projName,width,height){
   const {allDates,pointValuesMap}=buildTrendData(pjId);
   if(allDates.length<2||Object.keys(pointValuesMap).length===0)return null;
@@ -1811,7 +1868,7 @@ async function generateTrendChart(pjId,projName,width,height){
   const datasets=displayPoints.map((point,idx)=>{
     const color=COLORS28[idx%COLORS28.length];
     const data=allDates.map(date=>pointValuesMap[point][date]??null);
-    return {label:point,data,borderColor:color,backgroundColor:color,borderWidth:1.5,pointRadius:0,pointHoverRadius:4,tension:0,fill:false,spanGaps:false};
+    return {label:point,data,borderColor:color,backgroundColor:color,borderWidth:2,pointRadius:0,pointHoverRadius:0,tension:0,fill:false,spanGaps:false};
   });
 
   const container=document.createElement('div');
@@ -1824,16 +1881,63 @@ async function generateTrendChart(pjId,projName,width,height){
   return new Promise((resolve)=>{
     const chart=new Chart(canvas.getContext('2d'),{
       type:'line',data:{labels:allDates,datasets},
-      options:{responsive:false,animation:false,devicePixelRatio:2,
-        plugins:{title:{display:true,text:projName+' 位移趋势图',font:{size:14},padding:10},legend:{position:'top',labels:{boxWidth:10,font:{size:8},padding:3}}},
-        scales:{x:{title:{display:true,text:'日期',font:{size:10}},grid:{display:true,color:'rgba(0,0,0,0.06)'},ticks:{font:{size:8},maxRotation:45,maxTicksLimit:20}},
-          y:{title:{display:true,text:'累计位移量(mm)',font:{size:10}},grid:{color:'rgba(0,0,0,0.06)'}}}
+      plugins:[wpsChartPlugin],
+      options:{
+        responsive:false,animation:false,devicePixelRatio:2,
+        layout:{padding:{top:32}},
+        plugins:{
+          legend:{display:false},
+          tooltip:{enabled:false}
+        },
+        scales:{
+          x:{
+            type:'category',
+            title:{display:false},
+            grid:{display:false},
+            border:{display:true,color:'#000000',width:1},
+            ticks:{
+              font:{size:9,family:'Arial,sans-serif'},
+              color:'#000000',
+              maxRotation:0,
+              autoSkip:true,
+              maxTicksLimit:12,
+              callback:function(val){
+                var label=this.getLabelForValue(val);
+                if(!label)return'';
+                var d=new Date(label);
+                if(isNaN(d.getTime()))return label;
+                return d.getFullYear()+'/'+(d.getMonth()+1)+'/'+d.getDate();
+              }
+            }
+          },
+          y:{
+            type:'linear',
+            min:10,max:80,
+            title:{
+              display:true,
+              text:'位移（mm）',
+              font:{size:10,family:'Arial,sans-serif'},
+              color:'#000000'
+            },
+            grid:{
+              display:true,
+              color:'rgba(0,0,0,0.12)',
+              drawBorder:false
+            },
+            border:{display:true,color:'#000000',width:1},
+            ticks:{
+              stepSize:10,
+              font:{size:9,family:'Arial,sans-serif'},
+              color:'#000000'
+            }
+          }
+        }
       }
     });
     setTimeout(()=>{
       try{const b64=canvas.toDataURL('image/png');chart.destroy();container.remove();resolve(b64);}
       catch(e){container.remove();resolve(null);}
-    },200);
+    },300);
   });
 }
 
@@ -1881,7 +1985,7 @@ function generateReport(){
     const chartPromises=[];
     areaOrder.forEach(ak=>{if(areas[ak])areas[ak].projects.forEach(proj=>{
       const {allDates}=buildTrendData(proj.id);
-      if(allDates.length>=2)chartPromises.push(generateTrendChart(proj.id,proj.name,800,400).then(b64=>{chartCache[proj.id]=b64;}));
+      if(allDates.length>=2)chartPromises.push(generateTrendChart(proj.id,proj.name,960,580).then(b64=>{chartCache[proj.id]=b64;}));
     });});
     await Promise.all(chartPromises);
 
